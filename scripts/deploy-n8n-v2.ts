@@ -168,11 +168,11 @@ function printUsage() {
 Usage: npx tsx scripts/deploy-n8n-v2.ts [options]
 
 Options:
-  --primary-provider=<name|num>   Primary LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: gemini]
+  --primary-provider=<name|num>   Primary LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: deepseek]
   --primary-model=<model_name>    Primary model name [default based on provider]
   --primary-key=<api_key>         Primary API key [default: loaded from environment]
   --fallback                      Enable fallback LLM model [default: false]
-  --fallback-provider=<name|num>  Fallback LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: deepseek]
+  --fallback-provider=<name|num>  Fallback LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: gemini]
   --fallback-model=<model_name>   Fallback model name [default based on provider]
   --fallback-key=<api_key>        Fallback API key [default: loaded from environment]
   -h, --help                      Show this help message
@@ -200,7 +200,7 @@ async function main() {
 
   let primaryProviderChoice: string;
   try {
-    primaryProviderChoice = normalizeProvider(String(args["primary-provider"] || "gemini"));
+    primaryProviderChoice = normalizeProvider(String(args["primary-provider"] || "deepseek"));
   } catch (err: any) {
     console.error(err.message);
     printUsage();
@@ -212,7 +212,7 @@ async function main() {
 
   if (!primaryApiKey) {
     console.error(`Error: API Key for primary provider (${primaryProviderChoice}) is required.`);
-    console.error(`Please provide --primary-key=<key> or set the corresponding environment variable (e.g. GEMINI_API_KEY).`);
+    console.error(`Please provide --primary-key=<key> or set the corresponding environment variable (e.g. DEEPSEEK_API_KEY).`);
     printUsage();
     process.exit(1);
   }
@@ -224,7 +224,7 @@ async function main() {
 
   if (configureFallback) {
     try {
-      fallbackProviderChoice = normalizeProvider(String(args["fallback-provider"] || "deepseek"));
+      fallbackProviderChoice = normalizeProvider(String(args["fallback-provider"] || "gemini"));
     } catch (err: any) {
       console.error(err.message);
       printUsage();
@@ -236,7 +236,7 @@ async function main() {
 
     if (!fallbackApiKey) {
       console.error(`Error: API Key for fallback provider (${fallbackProviderChoice}) is required when fallback is enabled.`);
-      console.error(`Please provide --fallback-key=<key> or set the corresponding environment variable (e.g. DEEPSEEK_API_KEY).`);
+      console.error(`Please provide --fallback-key=<key> or set the corresponding environment variable (e.g. GEMINI_API_KEY).`);
       printUsage();
       process.exit(1);
     }
