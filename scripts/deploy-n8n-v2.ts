@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as readline from "readline";
 
 // Load .env variables
 const envPath = path.join(__dirname, "../.env");
@@ -19,13 +20,27 @@ if (fs.existsSync(envPath)) {
 
 const N8N_HOST = process.env.N8N_HOST || "https://n8n.gaboggamer.online";
 const N8N_API_KEY = process.env.N8N_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
 if (!N8N_API_KEY) {
   console.error("Error: N8N_API_KEY is not defined in .env");
   process.exit(1);
+}
+
+// Interactive prompt helper
+function askQuestion(query: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) =>
+    rl.question(query, (ans) => {
+      rl.close();
+      resolve(ans.trim());
+    })
+  );
 }
 
 async function n8nRequest(endpoint: string, method: string = "GET", body?: any) {
@@ -68,206 +83,525 @@ async function getOrCreateCredential(name: string, type: string, data: any) {
   }
 }
 
-async function main() {
-  console.log("Starting n8n Candidate Evaluation Flow deployment...");
+interface ProviderConfig {
+  nodeType: string;
+  credentialType: string;
+  credentialData: any;
+  nodeParameters: any;
+}
 
-  // 1. Create/Retrieve Supabase credential
-  console.log("Checking Supabase credentials...");
-  const supabaseCredId = await getOrCreateCredential("Semillero2_Supabase_V2", "supabaseApi", {
+function getProviderConfig(provider: string, apiKey: string, modelName: string): ProviderConfig {
+  switch (provider) {
+    case "1": // Deepseek (Native)
+      return {
+        nodeType: "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+        credentialType: "deepSeekApi",
+        credentialData: {
+          apiKey,
+          allowedHttpRequestDomains: "none",
+        },
+        nodeParameters: {
+          model: modelName || "deepseek-chat",
+          options: {},
+        },
+      };
+    case "2": // OpenAI
+      return {
+        nodeType: "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        credentialType: "openAiApi",
+        credentialData: {
+          apiKey,
+          header: false,
+          allowedHttpRequestDomains: "none",
+        },
+        nodeParameters: {
+          model: modelName || "gpt-4o-mini",
+          options: {},
+        },
+      };
+    case "3": // Google Gemini
+      return {
+        nodeType: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        credentialType: "googlePalmApi",
+        credentialData: {
+          apiKey,
+          host: "https://generativelanguage.googleapis.com",
+          allowedHttpRequestDomains: "none",
+        },
+        nodeParameters: {
+          model: modelName || "gemini-1.5-flash",
+          options: {},
+        },
+      };
+    case "4": // Anthropic
+      return {
+        nodeType: "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+        credentialType: "anthropicApi",
+        credentialData: {
+          apiKey,
+          allowedHttpRequestDomains: "none",
+        },
+        nodeParameters: {
+          model: modelName || "claude-3-5-sonnet-latest",
+          options: {},
+        },
+      };
+    default:
+      throw new Error("Invalid provider chosen");
+  }
+}
+
+async function main() {
+  console.log("\n==================================================");
+  console.log("Welcome to interactive n8n workflow deployment");
+  console.log("==================================================");
+
+  // 1. Ask for Primary Provider
+  console.log("\nSelect Primary LLM Provider:");
+  console.log("1. Deepseek (Native Node)");
+  console.log("2. OpenAI (Standard)");
+  console.log("3. Google Gemini");
+  console.log("4. Anthropic");
+  const primaryProviderChoice = (await askQuestion("Enter choice (1-4) [default: 3]: ")) || "3";
+
+  let defaultModel = "gemini-1.5-flash";
+  if (primaryProviderChoice === "1") defaultModel = "deepseek-chat";
+  else if (primaryProviderChoice === "2") defaultModel = "gpt-4o-mini";
+  else if (primaryProviderChoice === "4") defaultModel = "claude-3-5-sonnet-latest";
+
+  const primaryModelName = (await askQuestion(`Enter primary model name [default: ${defaultModel}]: `)) || defaultModel;
+
+  let defaultKey = "";
+  if (primaryProviderChoice === "1") defaultKey = process.env.DEEPSEEK_API_KEY || "";
+  else if (primaryProviderChoice === "3") defaultKey = process.env.GEMINI_API_KEY || "";
+
+  const primaryApiKey = (await askQuestion(`Enter API key [default: ${defaultKey ? "Loaded from .env" : "None"}]: `)) || defaultKey;
+  if (!primaryApiKey) {
+    console.error("Primary API Key is required.");
+    process.exit(1);
+  }
+
+  // 2. Ask for Fallback Provider
+  const configureFallback = ((await askQuestion("\nDo you want to configure a Fallback LLM Model? (y/n) [default: n]: ")) || "n").toLowerCase() === "y";
+  let fallbackProviderChoice = "";
+  let fallbackModelName = "";
+  let fallbackApiKey = "";
+
+  if (configureFallback) {
+    console.log("\nSelect Fallback LLM Provider:");
+    console.log("1. Deepseek (Native Node)");
+    console.log("2. OpenAI (Standard)");
+    console.log("3. Google Gemini");
+    console.log("4. Anthropic");
+    fallbackProviderChoice = (await askQuestion("Enter choice (1-4) [default: 1]: ")) || "1";
+
+    let defaultFallbackModel = "deepseek-chat";
+    if (fallbackProviderChoice === "2") defaultFallbackModel = "gpt-4o-mini";
+    else if (fallbackProviderChoice === "3") defaultFallbackModel = "gemini-1.5-flash";
+    else if (fallbackProviderChoice === "4") defaultFallbackModel = "claude-3-5-sonnet-latest";
+
+    fallbackModelName = (await askQuestion(`Enter fallback model name [default: ${defaultFallbackModel}]: `)) || defaultFallbackModel;
+
+    let defaultFallbackKey = "";
+    if (fallbackProviderChoice === "1") defaultFallbackKey = process.env.DEEPSEEK_API_KEY || "";
+    else if (fallbackProviderChoice === "3") defaultFallbackKey = process.env.GEMINI_API_KEY || "";
+
+    fallbackApiKey = (await askQuestion(`Enter fallback API key [default: ${defaultFallbackKey ? "Loaded from .env" : "None"}]: `)) || defaultFallbackKey;
+    if (!fallbackApiKey) {
+      console.error("Fallback API Key is required.");
+      process.exit(1);
+    }
+  }
+
+  console.log("\nDeploying credentials to n8n...");
+  const supabaseCredId = await getOrCreateCredential("Semillero2_Supabase_V3", "supabaseApi", {
     host: SUPABASE_URL,
     serviceRole: SUPABASE_SECRET_KEY,
     allowedHttpRequestDomains: "none",
   });
 
-  // 2. Create/Retrieve Gemini credential
-  console.log("Checking Gemini credentials...");
-  const geminiCredId = await getOrCreateCredential("Semillero2_Gemini_V2", "googlePalmApi", {
-    apiKey: GEMINI_API_KEY,
-    host: "https://generativelanguage.googleapis.com",
-    allowedHttpRequestDomains: "none",
-  });
+  const primaryConfig = getProviderConfig(primaryProviderChoice, primaryApiKey, primaryModelName);
+  const primaryCredId = await getOrCreateCredential(
+    `Semillero2_Primary_${primaryConfig.credentialType}`,
+    primaryConfig.credentialType,
+    primaryConfig.credentialData
+  );
 
-  // 3. Define the E2E Candidate Evaluation workflow
-  const workflowDefinition = {
-    name: "Semillero2: End-to-End Candidate Evaluation",
-    settings: {},
-    nodes: [
-      {
-        parameters: {
-          httpMethod: "POST",
-          path: "evaluate-candidate",
-          responseMode: "responseNode",
-          options: {},
-        },
-        id: "webhook-trigger",
-        name: "Webhook Trigger",
-        type: "n8n-nodes-base.webhook",
-        typeVersion: 1.1,
-        position: [100, 300],
-      },
-      {
-        parameters: {
-          promptType: "Define below",
-          text: "={{ $json.body.text }}",
-          systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
-        },
-        id: "llm-chain",
-        name: "LLM Chain Evaluation",
-        type: "@n8n/n8n-nodes-langchain.chainLlm",
-        typeVersion: 1.4,
-        position: [350, 300],
-      },
-      {
-        parameters: {
-          model: "gemini-1.5-flash",
-          options: {},
-        },
-        id: "gemini-model",
-        name: "Gemini Chat Model",
-        type: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-        typeVersion: 1,
-        position: [300, 480],
-        credentials: {
-          googlePalmApi: {
-            id: geminiCredId,
-            name: "Semillero2_Gemini_V2",
-          },
-        },
-      },
-      {
-        parameters: {
-          jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
-        },
-        id: "json-parser",
-        name: "Structured Output Parser",
-        type: "@n8n/n8n-nodes-langchain.outputParserStructured",
-        typeVersion: 1,
-        position: [460, 480],
-      },
-      {
-        parameters: {
-          jsCode: `const input = $input.first().json;
-const webhookData = $('Webhook Trigger').first().json.body;
-return [{
-  json: {
-    candidate_id: webhookData.candidateId,
-    interview_id: webhookData.interviewId,
-    ai_score: input.ai_score,
-    evaluation: {
-      summary: input.summary,
-      classification: input.classification,
-      suggestions: input.suggestions,
-      riskLevel: input.riskLevel
-    }
+  let fallbackConfig: ProviderConfig | null = null;
+  let fallbackCredId = "";
+  if (configureFallback) {
+    fallbackConfig = getProviderConfig(fallbackProviderChoice, fallbackApiKey, fallbackModelName);
+    fallbackCredId = await getOrCreateCredential(
+      `Semillero2_Fallback_${fallbackConfig.credentialType}`,
+      fallbackConfig.credentialType,
+      fallbackConfig.credentialData
+    );
   }
-}];`,
-        },
-        id: "format-data",
-        name: "Format Evaluation Data",
-        type: "n8n-nodes-base.code",
-        typeVersion: 2,
-        position: [600, 300],
-      },
-      {
-        parameters: {
-          operation: "insert",
-          table: "scores",
-          options: {},
-        },
-        id: "supabase-insert",
-        name: "Insert Score to Supabase",
-        type: "n8n-nodes-base.supabase",
-        typeVersion: 1,
-        position: [800, 300],
-        credentials: {
-          supabaseApi: {
-            id: supabaseCredId,
-            name: "Semillero2_Supabase_V2",
-          },
-        },
-      },
-      {
-        parameters: {
-          options: {},
-        },
-        id: "respond-webhook",
-        name: "Respond to Webhook",
-        type: "n8n-nodes-base.respondToWebhook",
-        typeVersion: 1.1,
-        position: [1000, 300],
-      },
-    ],
-    connections: {
-      "Webhook Trigger": {
-        main: [
-          [
-            {
-              node: "LLM Chain Evaluation",
-              type: "main",
-              index: 0,
-            },
-          ],
-        ],
-      },
-      "Gemini Chat Model": {
-        ai_languageModel: [
-          [
-            {
-              node: "LLM Chain Evaluation",
-              type: "ai_languageModel",
-              index: 0,
-            },
-          ],
-        ],
-      },
-      "Structured Output Parser": {
-        outputParser: [
-          [
-            {
-              node: "LLM Chain Evaluation",
-              type: "outputParser",
-              index: 0,
-            },
-          ],
-        ],
-      },
-      "LLM Chain Evaluation": {
-        main: [
-          [
-            {
-              node: "Format Evaluation Data",
-              type: "main",
-              index: 0,
-            },
-          ],
-        ],
-      },
-      "Format Evaluation Data": {
-        main: [
-          [
-            {
-              node: "Insert Score to Supabase",
-              type: "main",
-              index: 0,
-            },
-          ],
-        ],
-      },
-      "Insert Score to Supabase": {
-        main: [
-          [
-            {
-              node: "Respond to Webhook",
-              type: "main",
-              index: 0,
-            },
-          ],
-        ],
+
+  // 3. Define workflow nodes dynamically
+  console.log("\nBuilding workflow nodes...");
+
+  const webhookTriggerNode = {
+    parameters: {
+      httpMethod: "POST",
+      path: "evaluate-candidate",
+      responseMode: "responseNode",
+      options: {},
+    },
+    id: "webhook-trigger",
+    name: "Webhook Trigger",
+    type: "n8n-nodes-base.webhook",
+    typeVersion: 1.1,
+    position: [100, 300],
+  };
+
+  const primaryChainNode = {
+    parameters: {
+      promptType: "defineBelow",       // Fixed casing: camelCase!
+      hasOutputParser: true,           // Enforce "Require Specific Output Format"
+      text: "={{ $('Webhook Trigger').item.json.body.text }}",
+      systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
+    },
+    id: "llm-chain-primary",
+    name: "LLM Chain Evaluation (Primary)",
+    type: "@n8n/n8n-nodes-langchain.chainLlm",
+    typeVersion: 1.4,
+    position: [400, 300],
+    continueOnFail: configureFallback, // continue on fail only if fallback exists
+  };
+
+  const primaryModelNode = {
+    parameters: primaryConfig.nodeParameters,
+    id: "primary-model",
+    name: "Primary Chat Model",
+    type: primaryConfig.nodeType,
+    typeVersion: 1,
+    position: [350, 480],
+    credentials: {
+      [primaryConfig.credentialType]: {
+        id: primaryCredId,
+        name: `Semillero2_Primary_${primaryConfig.credentialType}`,
       },
     },
   };
 
-  console.log("Deploying workflow to n8n...");
+  const jsonParserNode = {
+    parameters: {
+      jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
+    },
+    id: "json-parser",
+    name: "Structured Output Parser",
+    type: "@n8n/n8n-nodes-langchain.outputParserStructured",
+    typeVersion: 1,
+    position: [480, 480],
+  };
+
+  // Replace Code node with a native Edit Fields (Set) node to avoid code blocks
+  const setNode = {
+    parameters: {
+      assignments: {
+        assignments: [
+          {
+            name: "candidate_id",
+            value: "={{ $('Webhook Trigger').item.json.body.candidateId }}",
+            type: "string",
+          },
+          {
+            name: "interview_id",
+            value: "={{ $('Webhook Trigger').item.json.body.interviewId }}",
+            type: "string",
+          },
+          {
+            name: "ai_score",
+            value: "={{ $json.ai_score }}",
+            type: "number",
+          },
+          {
+            name: "evaluation",
+            value: "={{ { summary: $json.summary, classification: $json.classification, suggestions: $json.suggestions, riskLevel: $json.riskLevel } }}",
+            type: "object",
+          },
+        ],
+      },
+      options: {
+        includeOtherFields: false, // Drop other fields to cleanly match schema
+      },
+    },
+    id: "format-data",
+    name: "Format Evaluation Data",
+    type: "n8n-nodes-base.set",
+    typeVersion: 3,
+    position: [850, 300],
+  };
+
+  const supabaseInsertNode = {
+    parameters: {
+      operation: "insert",
+      table: "scores",
+      options: {},
+    },
+    id: "supabase-insert",
+    name: "Insert Score to Supabase",
+    type: "n8n-nodes-base.supabase",
+    typeVersion: 1,
+    position: [1050, 300],
+    credentials: {
+      supabaseApi: {
+        id: supabaseCredId,
+        name: "Semillero2_Supabase_V3",
+      },
+    },
+  };
+
+  const respondWebhookNode = {
+    parameters: {
+      options: {},
+    },
+    id: "respond-webhook",
+    name: "Respond to Webhook",
+    type: "n8n-nodes-base.respondToWebhook",
+    typeVersion: 1.1,
+    position: [1250, 300],
+  };
+
+  const wNodes: any[] = [
+    webhookTriggerNode,
+    primaryChainNode,
+    primaryModelNode,
+    jsonParserNode,
+    setNode,
+    supabaseInsertNode,
+    respondWebhookNode,
+  ];
+
+  const wConnections: any = {
+    "Webhook Trigger": {
+      main: [
+        [
+          {
+            node: "LLM Chain Evaluation (Primary)",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Primary Chat Model": {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Evaluation (Primary)",
+            type: "ai_languageModel",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Structured Output Parser": {
+      outputParser: [
+        [
+          {
+            node: "LLM Chain Evaluation (Primary)",
+            type: "outputParser",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Format Evaluation Data": {
+      main: [
+        [
+          {
+            node: "Insert Score to Supabase",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Insert Score to Supabase": {
+      main: [
+        [
+          {
+            node: "Respond to Webhook",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+  };
+
+  if (configureFallback && fallbackConfig) {
+    console.log("Configuring Fallback LLM Route...");
+
+    const checkErrorNode = {
+      parameters: {
+        conditions: {
+          options: {
+            caseSensitive: true,
+            leftValue: "",
+            typeValidation: "strict",
+          },
+          conditions: [
+            {
+              id: "err-cond",
+              leftValue: "={{ $json.hasOwnProperty('error') }}",
+              rightValue: "true",
+              operator: {
+                type: "boolean",
+                operation: "equals",
+              },
+            },
+          ],
+          combinator: "and",
+        },
+      },
+      id: "check-error",
+      name: "Check Primary Error",
+      type: "n8n-nodes-base.if",
+      typeVersion: 2.2,
+      position: [600, 300],
+    };
+
+    const fallbackChainNode = {
+      parameters: {
+        promptType: "defineBelow",       // Fixed casing: camelCase!
+        hasOutputParser: true,           // Enforce "Require Specific Output Format"
+        text: "={{ $('Webhook Trigger').item.json.body.text }}",
+        systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
+      },
+      id: "llm-chain-fallback",
+      name: "LLM Chain Evaluation (Fallback)",
+      type: "@n8n/n8n-nodes-langchain.chainLlm",
+      typeVersion: 1.4,
+      position: [800, 450],
+    };
+
+    const fallbackModelNode = {
+      parameters: fallbackConfig.nodeParameters,
+      id: "fallback-model",
+      name: "Fallback Chat Model",
+      type: fallbackConfig.nodeType,
+      typeVersion: 1,
+      position: [750, 630],
+      credentials: {
+        [fallbackConfig.credentialType]: {
+          id: fallbackCredId,
+          name: `Semillero2_Fallback_${fallbackConfig.credentialType}`,
+        },
+      },
+    };
+
+    const jsonParserFallbackNode = {
+      parameters: {
+        jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
+      },
+      id: "json-parser-fallback",
+      name: "Structured Output Parser (Fallback)",
+      type: "@n8n/n8n-nodes-langchain.outputParserStructured",
+      typeVersion: 1,
+      position: [880, 630],
+    };
+
+    // Reposition Set node for fallback routing
+    setNode.position = [1050, 450];
+    supabaseInsertNode.position = [1250, 450];
+    respondWebhookNode.position = [1450, 450];
+
+    wNodes.push(checkErrorNode, fallbackChainNode, fallbackModelNode, jsonParserFallbackNode);
+
+    // Primary chain routes to IF check
+    wConnections["LLM Chain Evaluation (Primary)"] = {
+      main: [
+        [
+          {
+            node: "Check Primary Error",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    };
+
+    // IF Node routes
+    wConnections["Check Primary Error"] = {
+      main: [
+        [
+          {
+            node: "LLM Chain Evaluation (Fallback)",
+            type: "main",
+            index: 0,
+          },
+        ], // true branch (Output 0 -> Error happened)
+        [
+          {
+            node: "Format Evaluation Data",
+            type: "main",
+            index: 0,
+          },
+        ], // false branch (Output 1 -> Success)
+      ],
+    };
+
+    // Connect fallback LLM components
+    wConnections["Fallback Chat Model"] = {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Evaluation (Fallback)",
+            type: "ai_languageModel",
+            index: 0,
+          },
+        ],
+      ],
+    };
+
+    wConnections["Structured Output Parser (Fallback)"] = {
+      outputParser: [
+        [
+          {
+            node: "LLM Chain Evaluation (Fallback)",
+            type: "outputParser",
+            index: 0,
+          },
+        ],
+      ],
+    };
+
+    wConnections["LLM Chain Evaluation (Fallback)"] = {
+      main: [
+        [
+          {
+            node: "Format Evaluation Data",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    };
+  } else {
+    // If no fallback, wire directly Primary Chain -> Set node
+    wConnections["LLM Chain Evaluation (Primary)"].main = [
+      [
+        {
+          node: "Format Evaluation Data",
+          type: "main",
+          index: 0,
+        },
+      ],
+    ];
+  }
+
+  // Define complete workflow object
+  const workflowDefinition = {
+    name: "Semillero2: End-to-End Candidate Evaluation",
+    settings: {},
+    nodes: wNodes,
+    connections: wConnections,
+  };
+
+  console.log("\nDeploying workflow to n8n...");
   // Check if it already exists
   const workflowsList = await n8nRequest("/api/v1/workflows");
   const existingWf = workflowsList.data.find(
