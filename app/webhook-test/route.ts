@@ -89,35 +89,57 @@ export async function GET(request: NextRequest) {
 
     const { candidateId, interviewId, n8nResponse } = parseResult;
 
-    // 5. Verification - Poll the Supabase `scores` table to verify n8n updated the DB
     let scoreRecord = null;
+    let verified = false;
     let verificationAttempts = 0;
-    const maxAttempts = 10;
-    const delayMs = 1500;
 
-    for (let i = 0; i < maxAttempts; i++) {
-      verificationAttempts++;
-      // Wait for n8n execution to finish and write back
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (testMode) {
+      // In test mode, we skip DB insertion, so n8n returns the structured response directly.
+      // Let's verify that the response contains the expected evaluation structure.
+      const hasEvaluation = n8nResponse && typeof n8nResponse === "object" && "evaluation" in n8nResponse;
+      const hasAiScore = n8nResponse && typeof n8nResponse === "object" && "ai_score" in n8nResponse;
 
-      const { data: score, error: scoreError } = await supabase
-        .from("scores")
-        .select("*")
-        .eq("candidate_id", candidateId)
-        .eq("interview_id", interviewId)
-        .maybeSingle();
+      if (hasEvaluation && hasAiScore) {
+        verified = true;
+        scoreRecord = n8nResponse;
+      }
+    } else {
+      // In live mode, we poll the DB to verify, but we MUST clean it up immediately afterwards
+      const maxAttempts = 10;
+      const delayMs = 1500;
 
-      if (score && !scoreError) {
-        scoreRecord = score;
-        break;
+      for (let i = 0; i < maxAttempts; i++) {
+        verificationAttempts++;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+        const { data: score, error: scoreError } = await supabase
+          .from("scores")
+          .select("*")
+          .eq("candidate_id", candidateId)
+          .eq("interview_id", interviewId)
+          .maybeSingle();
+
+        if (score && !scoreError) {
+          scoreRecord = score;
+          verified = true;
+          break;
+        }
+      }
+
+      // Cleanup immediately to avoid database clutter!
+      if (candidateId && candidateId !== "00000000-0000-0000-0000-000000000000") {
+        console.log(`Cleaning up test candidate: ${candidateId}`);
+        await supabase.from("scores").delete().eq("candidate_id", candidateId);
+        await supabase.from("interviews").delete().eq("candidate_id", candidateId);
+        await supabase.from("candidates").delete().eq("id", candidateId);
       }
     }
 
     return NextResponse.json({
-      status: scoreRecord ? "success" : "completed_with_pending_evaluation",
-      message: scoreRecord
-        ? "Pipeline test executed and verified successfully!"
-        : "Pipeline executed but AI evaluation write-back is pending or failed.",
+      status: verified ? "success" : "completed_with_pending_evaluation",
+      message: verified
+        ? (testMode ? "Pipeline test executed and verified successfully (In-Memory / No DB Write)!" : "Pipeline test executed, verified, and cleaned successfully from DB!")
+        : "Pipeline executed but AI evaluation verification failed.",
       testDetails: {
         jobUsed: {
           id: job.id,
@@ -131,7 +153,7 @@ export async function GET(request: NextRequest) {
         },
         verification: {
           attempts: verificationAttempts,
-          verified: !!scoreRecord,
+          verified,
           scoreData: scoreRecord,
         }
       }

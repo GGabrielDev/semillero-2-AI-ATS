@@ -48,54 +48,61 @@ export async function POST(request: NextRequest) {
     // Generate candidate embedding
     const embedding = await generateEmbedding(cleanText);
 
-    // Initialize Supabase admin client
-    const supabase = createServerSupabaseClient();
-
-    // Insert candidate
-    const { data: candidate, error: candidateError } = await supabase
-      .from("candidates")
-      .insert({
-        name,
-        contact_info: { email, phone },
-        embedding,
-      })
-      .select("*")
-      .single();
-
-    if (candidateError || !candidate) {
-      return NextResponse.json(
-        { error: candidateError?.message || "Failed to insert candidate" },
-        { status: 500 }
-      );
-    }
-
-    // Insert an initial interview
-    const { data: interview, error: interviewError } = await supabase
-      .from("interviews")
-      .insert({
-        candidate_id: candidate.id,
-        job_id: jobId,
-        interview_date: new Date().toISOString(),
-        stage: "Screening",
-      })
-      .select("*")
-      .single();
-
-    if (interviewError || !interview) {
-      return NextResponse.json(
-        { error: interviewError?.message || "Failed to insert interview" },
-        { status: 500 }
-      );
-    }
-
     const isTest = formData.get("isTest") === "true";
+
+    let candidateId = "00000000-0000-0000-0000-000000000000";
+    let interviewId = "00000000-0000-0000-0000-000000000000";
+    let candidateName = name;
+
+    if (!isTest) {
+      // Initialize Supabase admin client
+      const supabase = createServerSupabaseClient();
+
+      // Insert candidate
+      const { data: candidate, error: candidateError } = await supabase
+        .from("candidates")
+        .insert({
+          name,
+          contact_info: { email, phone },
+          embedding,
+        })
+        .select("*")
+        .single();
+
+      if (candidateError || !candidate) {
+        return NextResponse.json(
+          { error: candidateError?.message || "Failed to insert candidate" },
+          { status: 500 }
+        );
+      }
+
+      // Insert an initial interview
+      const { data: interview, error: interviewError } = await supabase
+        .from("interviews")
+        .insert({
+          candidate_id: candidate.id,
+          job_id: jobId,
+          interview_date: new Date().toISOString(),
+          stage: "Screening",
+        })
+        .select("*")
+        .single();
+
+      if (interviewError || !interview) {
+        return NextResponse.json(
+          { error: interviewError?.message || "Failed to insert interview" },
+          { status: 500 }
+        );
+      }
+
+      candidateId = candidate.id;
+      interviewId = interview.id;
+      candidateName = candidate.name;
+    }
 
     // Call n8n webhook
     let n8nResponseData = null;
-    let webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
-    if (isTest && webhookUrl) {
-      webhookUrl = webhookUrl.replace("/webhook/", "/webhook-test/");
-    }
+    const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
 
     if (webhookUrl) {
       try {
@@ -105,11 +112,12 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            candidateId: candidate.id,
-            interviewId: interview.id,
-            candidateName: candidate.name,
+            candidateId,
+            interviewId,
+            candidateName,
             candidateEmail: email,
             text: cleanText,
+            isTest,
           }),
         });
 
@@ -133,10 +141,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      candidateId: candidate.id,
-      interviewId: interview.id,
-      candidateName: candidate.name,
-      candidateEmail: email,
+      candidateId,
+      interviewId,
+      candidateName,
       n8nResponse: n8nResponseData,
     });
   } catch (error: unknown) {

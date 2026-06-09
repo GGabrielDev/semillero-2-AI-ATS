@@ -371,6 +371,36 @@ async function main() {
     position: [700, 300],
   };
 
+  const checkIfTestNode = {
+    parameters: {
+      conditions: {
+        options: {
+          caseSensitive: true,
+          leftValue: "",
+          typeValidation: "loose"
+        },
+        combinator: "and",
+        conditions: [
+          {
+            id: "is-test-check",
+            operator: {
+              name: "filter.operator.equals",
+              type: "boolean",
+              operation: "equals"
+            },
+            leftValue: "={{ $('Webhook Trigger').item.json.body.isTest }}",
+            rightValue: true
+          }
+        ]
+      }
+    },
+    id: "check-if-test",
+    name: "Check If Test",
+    type: "n8n-nodes-base.if",
+    typeVersion: 2.2,
+    position: [900, 300],
+  };
+
   const supabaseInsertNode = {
     parameters: {
       operation: "create",
@@ -382,7 +412,7 @@ async function main() {
     name: "Insert Score to Supabase",
     type: "n8n-nodes-base.supabase",
     typeVersion: 1,
-    position: [900, 300],
+    position: [1100, 420],
     credentials: {
       supabaseApi: {
         id: supabaseCredId,
@@ -399,7 +429,7 @@ async function main() {
     name: "Respond to Webhook",
     type: "n8n-nodes-base.respondToWebhook",
     typeVersion: 1.1,
-    position: [1100, 300],
+    position: [1300, 300],
   };
 
   const wNodes: any[] = [
@@ -408,6 +438,7 @@ async function main() {
     primaryModelNode,
     jsonParserNode,
     setNode,
+    checkIfTestNode,
     supabaseInsertNode,
     respondWebhookNode,
   ];
@@ -459,6 +490,24 @@ async function main() {
     },
     "Format Evaluation Data": {
       main: [
+        [
+          {
+            node: "Check If Test",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Check If Test": {
+      main: [
+        [
+          {
+            node: "Respond to Webhook",
+            type: "main",
+            index: 0,
+          },
+        ],
         [
           {
             node: "Insert Score to Supabase",
