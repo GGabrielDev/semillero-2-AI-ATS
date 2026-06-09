@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-// @ts-ignore
-import pdf from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,9 +16,11 @@ export async function POST(request: NextRequest) {
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       
-      // Extract text from PDF
-      const pdfData = await pdf(buffer);
+      // Extract text from PDF using PDFParse v2 API
+      const parser = new PDFParse({ data: buffer });
+      const pdfData = await parser.getText();
       const text = pdfData.text;
+      await parser.destroy();
 
       // Extract candidate name from file name (strip extension)
       const name = file.name.replace(/\.[^/.]+$/, "");
@@ -75,8 +76,9 @@ export async function POST(request: NextRequest) {
       message: "CVs processed and forwarded to n8n successfully",
       data: responseData,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in parse-cv route:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
