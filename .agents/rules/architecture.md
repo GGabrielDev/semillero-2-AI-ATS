@@ -11,3 +11,7 @@ ARCHITECTURAL RULE: Next.js is the presentation layer, authentication provider, 
 
 ## Database Rule
 DATABASE RULE: All database schemas must be written for Supabase PostgreSQL and include pgvector.
+DATABASE API KEYS RULE: Use Supabase's modern 'Publishable and secrets API keys' structure (using prefix sb_publishable_ for public client-side access and sb_secret_ for backend service access) instead of legacy anon/service_role keys.
+
+## Orchestration Rule
+ORCHESTRATION INTEGRATIONS RULE: Always use n8n's native/integrated nodes for LLM Logic (Basic LLM Chain connected to OpenAI Chat Model) and database operations (Supabase node) rather than raw HTTP requests.

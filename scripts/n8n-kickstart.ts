@@ -29,7 +29,7 @@ const EMAIL_PASSWORD = process.env.EMAIL_PASSWORD;
 const EMAIL_HOST = process.env.EMAIL_HOST;
 const EMAIL_PORT = parseInt(process.env.EMAIL_PORT || "465", 10);
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
 if (!N8N_API_KEY) {
   console.error("Error: N8N_API_KEY is not defined in .env file.");
@@ -55,40 +55,57 @@ async function n8nRequest(endpoint: string, method: string = "GET", body?: any) 
   return response.json();
 }
 
-async function main() {
-  console.log("Kickstarting n8n configuration...");
-
-  // 1. Manage IMAP Credentials
-  console.log("Setting up IMAP credentials...");
-  let credentialId = "";
+async function getOrCreateCredential(name: string, type: string, data: any) {
   try {
     const credsList = await n8nRequest("/api/v1/credentials");
-    const existingCred = credsList.data.find((c: any) => c.name === "Semillero2_IMAP" && c.type === "imap");
+    const existingCred = credsList.data.find((c: any) => c.name === name && c.type === type);
     if (existingCred) {
-      credentialId = existingCred.id;
-      console.log(`Reusing existing IMAP credentials (ID: ${credentialId})`);
+      console.log(`Reusing existing credential: ${name} (ID: ${existingCred.id})`);
+      return existingCred.id;
     } else {
       const newCred = await n8nRequest("/api/v1/credentials", "POST", {
-        name: "Semillero2_IMAP",
-        type: "imap",
-        data: {
-          host: EMAIL_HOST,
-          port: EMAIL_PORT,
-          user: EMAIL_USER,
-          password: EMAIL_PASSWORD,
-          secure: true,
-        },
+        name,
+        type,
+        data,
       });
-      credentialId = newCred.id;
-      console.log(`Created new IMAP credentials (ID: ${credentialId})`);
+      console.log(`Created new credential: ${name} (ID: ${newCred.id})`);
+      return newCred.id;
     }
   } catch (err: any) {
-    console.error("Error setting up IMAP credentials:", err.message);
+    console.error(`Error setting up credential ${name}:`, err.message);
     process.exit(1);
   }
+}
 
-  // 2. Define Workflow 3: Core AI Parsing Sub-workflow
-  console.log("Deploying Workflow 3: Core AI Parsing Sub-workflow...");
+async function main() {
+  console.log("Kickstarting n8n configuration with native integrations...");
+
+  // 1. Manage IMAP Credentials
+  const imapCredId = await getOrCreateCredential("Semillero2_IMAP", "imap", {
+    host: EMAIL_HOST,
+    port: EMAIL_PORT,
+    user: EMAIL_USER,
+    password: EMAIL_PASSWORD,
+    secure: true,
+  });
+
+  // 2. Manage OpenAI/Deepseek Credentials with explicit required validation flags
+  const openAiCredId = await getOrCreateCredential("Semillero2_OpenAI", "openAiApi", {
+    apiKey: DEEPSEEK_API_KEY,
+    url: "https://api.deepseek.com/v1",
+    header: false,
+    allowedHttpRequestDomains: "none",
+  });
+
+  // 3. Manage Supabase Credentials using modern keys structure (sb_secret_...)
+  const supabaseCredId = await getOrCreateCredential("Semillero2_Supabase", "supabaseApi", {
+    host: SUPABASE_URL,
+    serviceRole: SUPABASE_SECRET_KEY,
+    allowedHttpRequestDomains: "none",
+  });
+
+  // 4. Define Workflow 3: Core AI Parsing Sub-workflow
+  console.log("Deploying Workflow 3: Core AI Parsing Sub-workflow (Native AI & Supabase)...");
   const workflow3Definition = {
     name: "Semillero2: Core AI Parsing Sub-workflow",
     settings: {},
@@ -103,79 +120,72 @@ async function main() {
       },
       {
         parameters: {
-          method: "POST",
-          url: "https://api.deepseek.com/chat/completions",
-          sendHeaders: true,
-          headerParameters: {
-            parameters: [
-              {
-                name: "Authorization",
-                value: `Bearer ${DEEPSEEK_API_KEY}`,
-              },
-            ],
-          },
-          sendBody: true,
-          specifyBody: "json",
-          jsonBody: "={\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an AI recruitment assistant. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these four keys:\\n- summary: a brief profile summary.\\n- classification: 'Qualified', 'Unqualified', or 'Review'.\\n- suggestions: an array of recommendations for next steps.\\n- riskLevel: 'Low', 'Medium', or 'High'.\\n\\nDo not include markdown code blocks or any text outside the JSON.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.text }}\"\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+          promptType: "defineBelow",
+          text: "={{ $json.text }}",
+          systemMessage: "You are an AI recruitment assistant. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these four keys:\n- summary: a brief profile summary.\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps.\n- riskLevel: 'Low', 'Medium', or 'High'.\n\nDo not include markdown code blocks or any text outside the JSON.",
         },
-        id: "w3-deepseek-id",
-        name: "Deepseek LLM Parsing",
-        type: "n8n-nodes-base.httpRequest",
-        typeVersion: 4.2,
+        id: "w3-chain-id",
+        name: "Basic LLM Chain",
+        type: "@n8n/n8n-nodes-langchain.chainLlm",
+        typeVersion: 1.4,
         position: [480, 300],
       },
       {
         parameters: {
-          jsCode: `const content = $input.first().json.choices[0].message.content;
-const evaluation = JSON.parse(content);
+          model: "deepseek-chat",
+          options: {
+            baseURL: "https://api.deepseek.com/v1",
+          },
+        },
+        id: "w3-model-id",
+        name: "OpenAI Chat Model",
+        type: "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        typeVersion: 1,
+        position: [480, 480],
+        credentials: {
+          openAiApi: {
+            id: openAiCredId,
+            name: "Semillero2_OpenAI",
+          },
+        },
+      },
+      {
+        parameters: {
+          jsCode: `const content = $input.first().json.response.text;
+const cleanedText = content.replace(/\`\`\`json\\n?|\\n?\`\`\`/g, "").trim();
+const evaluation = JSON.parse(cleanedText);
 return [{
   json: {
     name: $('Execute Workflow Trigger').item.json.name || "Unknown Candidate",
     email: $('Execute Workflow Trigger').item.json.email || "unknown@example.com",
     summary: evaluation.summary,
-    classification: evaluation.classification,
-    suggestions: evaluation.suggestions,
-    riskLevel: evaluation.riskLevel,
-    evaluation: evaluation
+    seniority: evaluation.classification
   }
 }];`,
         },
         id: "w3-parse-id",
-        name: "Parse Deepseek Response",
+        name: "Parse LLM Response",
         type: "n8n-nodes-base.code",
         typeVersion: 2,
         position: [700, 300],
       },
       {
         parameters: {
-          method: "POST",
-          url: `${SUPABASE_URL}/rest/v1/candidates`,
-          sendHeaders: true,
-          headerParameters: {
-            parameters: [
-              {
-                name: "apikey",
-                value: SUPABASE_ANON_KEY,
-              },
-              {
-                name: "Authorization",
-                value: `Bearer ${SUPABASE_ANON_KEY}`,
-              },
-              {
-                name: "Prefer",
-                value: "return=representation",
-              },
-            ],
-          },
-          sendBody: true,
-          specifyBody: "json",
-          jsonBody: "={\n  \"name\": \"{{ $json.name }}\",\n  \"email\": \"{{ $json.email }}\",\n  \"summary\": \"{{ $json.summary }}\",\n  \"seniority\": \"{{ $json.classification }}\"\n}",
+          operation: "insert",
+          table: "candidates",
+          options: {},
         },
         id: "w3-supabase-id",
         name: "Insert Candidate to Supabase",
-        type: "n8n-nodes-base.httpRequest",
-        typeVersion: 4.2,
+        type: "n8n-nodes-base.supabase",
+        typeVersion: 1,
         position: [920, 300],
+        credentials: {
+          supabaseApi: {
+            id: supabaseCredId,
+            name: "Semillero2_Supabase",
+          },
+        },
       },
     ],
     connections: {
@@ -183,25 +193,36 @@ return [{
         main: [
           [
             {
-              node: "Deepseek LLM Parsing",
+              node: "Basic LLM Chain",
               type: "main",
               index: 0,
             },
           ],
         ],
       },
-      "Deepseek LLM Parsing": {
+      "OpenAI Chat Model": {
+        ai_languageModel: [
+          [
+            {
+              node: "Basic LLM Chain",
+              type: "ai_languageModel",
+              index: 0,
+            },
+          ],
+        ],
+      },
+      "Basic LLM Chain": {
         main: [
           [
             {
-              node: "Parse Deepseek Response",
+              node: "Parse LLM Response",
               type: "main",
               index: 0,
             },
           ],
         ],
       },
-      "Parse Deepseek Response": {
+      "Parse LLM Response": {
         main: [
           [
             {
@@ -219,7 +240,7 @@ return [{
   const w3Id = w3Result.id;
   console.log(`Workflow 3 deployed successfully (ID: ${w3Id})`);
 
-  // 3. Define Workflow 1: The API Gateway (Web UI Ingestion)
+  // 5. Define Workflow 1: The API Gateway (Web UI Ingestion)
   console.log("Deploying Workflow 1: The API Gateway...");
   const workflow1Definition = {
     name: "Semillero2: API Gateway (Web UI Ingestion)",
@@ -324,7 +345,7 @@ return [{
   console.log(`Workflow 1 deployed successfully (ID: ${w1Id})`);
   console.log(`Webhook URL: ${webhookPath}`);
 
-  // 4. Define Workflow 2: Email Ingestion Listener
+  // 6. Define Workflow 2: Email Ingestion Listener
   console.log("Deploying Workflow 2: Email Ingestion Listener...");
   const workflow2Definition = {
     name: "Semillero2: Email Ingestion Listener",
@@ -346,7 +367,7 @@ return [{
         position: [100, 300],
         credentials: {
           imap: {
-            id: credentialId,
+            id: imapCredId,
             name: "Semillero2_IMAP",
           },
         },
