@@ -257,8 +257,9 @@ async function main() {
 
   const primaryChainNode = {
     parameters: {
-      promptType: "defineBelow",       // Fixed casing: camelCase!
+      promptType: "define",             // Correct underlying value for manually defining prompt!
       hasOutputParser: true,           // Enforce "Require Specific Output Format"
+      hasFallbackModel: configureFallback, // Enable fallback model natively on the Chain node!
       text: "={{ $('Webhook Trigger').item.json.body.text }}",
       systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
     },
@@ -267,7 +268,6 @@ async function main() {
     type: "@n8n/n8n-nodes-langchain.chainLlm",
     typeVersion: 1.4,
     position: [400, 300],
-    continueOnFail: configureFallback, // continue on fail only if fallback exists
   };
 
   const primaryModelNode = {
@@ -276,7 +276,7 @@ async function main() {
     name: "Primary Chat Model",
     type: primaryConfig.nodeType,
     typeVersion: 1,
-    position: [350, 480],
+    position: [300, 480],
     credentials: {
       [primaryConfig.credentialType]: {
         id: primaryCredId,
@@ -293,7 +293,7 @@ async function main() {
     name: "Structured Output Parser",
     type: "@n8n/n8n-nodes-langchain.outputParserStructured",
     typeVersion: 1,
-    position: [480, 480],
+    position: [430, 480],
   };
 
   // Replace Code node with a native Edit Fields (Set) node to avoid code blocks
@@ -331,7 +331,7 @@ async function main() {
     name: "Format Evaluation Data",
     type: "n8n-nodes-base.set",
     typeVersion: 3,
-    position: [850, 300],
+    position: [700, 300],
   };
 
   const supabaseInsertNode = {
@@ -344,7 +344,7 @@ async function main() {
     name: "Insert Score to Supabase",
     type: "n8n-nodes-base.supabase",
     typeVersion: 1,
-    position: [1050, 300],
+    position: [900, 300],
     credentials: {
       supabaseApi: {
         id: supabaseCredId,
@@ -361,7 +361,7 @@ async function main() {
     name: "Respond to Webhook",
     type: "n8n-nodes-base.respondToWebhook",
     typeVersion: 1.1,
-    position: [1250, 300],
+    position: [1100, 300],
   };
 
   const wNodes: any[] = [
@@ -408,6 +408,17 @@ async function main() {
         ],
       ],
     },
+    "LLM Chain Evaluation (Primary)": {
+      main: [
+        [
+          {
+            node: "Format Evaluation Data",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
     "Format Evaluation Data": {
       main: [
         [
@@ -433,50 +444,7 @@ async function main() {
   };
 
   if (configureFallback && fallbackConfig) {
-    console.log("Configuring Fallback LLM Route...");
-
-    const checkErrorNode = {
-      parameters: {
-        conditions: {
-          options: {
-            caseSensitive: true,
-            leftValue: "",
-            typeValidation: "strict",
-          },
-          conditions: [
-            {
-              id: "err-cond",
-              leftValue: "={{ $json.hasOwnProperty('error') }}",
-              rightValue: "true",
-              operator: {
-                type: "boolean",
-                operation: "equals",
-              },
-            },
-          ],
-          combinator: "and",
-        },
-      },
-      id: "check-error",
-      name: "Check Primary Error",
-      type: "n8n-nodes-base.if",
-      typeVersion: 2.2,
-      position: [600, 300],
-    };
-
-    const fallbackChainNode = {
-      parameters: {
-        promptType: "defineBelow",       // Fixed casing: camelCase!
-        hasOutputParser: true,           // Enforce "Require Specific Output Format"
-        text: "={{ $('Webhook Trigger').item.json.body.text }}",
-        systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
-      },
-      id: "llm-chain-fallback",
-      name: "LLM Chain Evaluation (Fallback)",
-      type: "@n8n/n8n-nodes-langchain.chainLlm",
-      typeVersion: 1.4,
-      position: [800, 450],
-    };
+    console.log("Adding Fallback Chat Model...");
 
     const fallbackModelNode = {
       parameters: fallbackConfig.nodeParameters,
@@ -484,7 +452,7 @@ async function main() {
       name: "Fallback Chat Model",
       type: fallbackConfig.nodeType,
       typeVersion: 1,
-      position: [750, 630],
+      position: [560, 480],
       credentials: {
         [fallbackConfig.credentialType]: {
           id: fallbackCredId,
@@ -493,104 +461,20 @@ async function main() {
       },
     };
 
-    const jsonParserFallbackNode = {
-      parameters: {
-        jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
-      },
-      id: "json-parser-fallback",
-      name: "Structured Output Parser (Fallback)",
-      type: "@n8n/n8n-nodes-langchain.outputParserStructured",
-      typeVersion: 1,
-      position: [880, 630],
-    };
+    wNodes.push(fallbackModelNode);
 
-    // Reposition Set node for fallback routing
-    setNode.position = [1050, 450];
-    supabaseInsertNode.position = [1250, 450];
-    respondWebhookNode.position = [1450, 450];
-
-    wNodes.push(checkErrorNode, fallbackChainNode, fallbackModelNode, jsonParserFallbackNode);
-
-    // Primary chain routes to IF check
-    wConnections["LLM Chain Evaluation (Primary)"] = {
-      main: [
-        [
-          {
-            node: "Check Primary Error",
-            type: "main",
-            index: 0,
-          },
-        ],
-      ],
-    };
-
-    // IF Node routes
-    wConnections["Check Primary Error"] = {
-      main: [
-        [
-          {
-            node: "LLM Chain Evaluation (Fallback)",
-            type: "main",
-            index: 0,
-          },
-        ], // true branch (Output 0 -> Error happened)
-        [
-          {
-            node: "Format Evaluation Data",
-            type: "main",
-            index: 0,
-          },
-        ], // false branch (Output 1 -> Success)
-      ],
-    };
-
-    // Connect fallback LLM components
+    // Connect fallback model directly: source port is ai_languageModel, target port is ai_fallbackModel!
     wConnections["Fallback Chat Model"] = {
       ai_languageModel: [
         [
           {
-            node: "LLM Chain Evaluation (Fallback)",
-            type: "ai_languageModel",
+            node: "LLM Chain Evaluation (Primary)",
+            type: "ai_fallbackModel",
             index: 0,
           },
         ],
       ],
     };
-
-    wConnections["Structured Output Parser (Fallback)"] = {
-      outputParser: [
-        [
-          {
-            node: "LLM Chain Evaluation (Fallback)",
-            type: "outputParser",
-            index: 0,
-          },
-        ],
-      ],
-    };
-
-    wConnections["LLM Chain Evaluation (Fallback)"] = {
-      main: [
-        [
-          {
-            node: "Format Evaluation Data",
-            type: "main",
-            index: 0,
-          },
-        ],
-      ],
-    };
-  } else {
-    // If no fallback, wire directly Primary Chain -> Set node
-    wConnections["LLM Chain Evaluation (Primary)"].main = [
-      [
-        {
-          node: "Format Evaluation Data",
-          type: "main",
-          index: 0,
-        },
-      ],
-    ];
   }
 
   // Define complete workflow object
@@ -602,7 +486,6 @@ async function main() {
   };
 
   console.log("\nDeploying workflow to n8n...");
-  // Check if it already exists
   const workflowsList = await n8nRequest("/api/v1/workflows");
   const existingWf = workflowsList.data.find(
     (w: any) => w.name === "Semillero2: End-to-End Candidate Evaluation"
