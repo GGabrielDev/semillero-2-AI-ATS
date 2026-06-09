@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as readline from "readline";
 
 // Load .env variables
 const envPath = path.join(__dirname, "../.env");
@@ -21,26 +20,14 @@ if (fs.existsSync(envPath)) {
 const N8N_HOST = process.env.N8N_HOST || "https://n8n.gaboggamer.online";
 const N8N_API_KEY = process.env.N8N_API_KEY;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_SECRET_KEY = (process.env.SUPABASE_SECRET_KEY && process.env.SUPABASE_SECRET_KEY !== "sb_secret_your_secret_key")
+  ? process.env.SUPABASE_SECRET_KEY
+  : process.env.SUPABASE_PUBLISHABLE_KEY;
 
 if (!N8N_API_KEY) {
   console.error("Error: N8N_API_KEY is not defined in .env");
   process.exit(1);
-}
-
-// Interactive prompt helper
-function askQuestion(query: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) =>
-    rl.question(query, (ans) => {
-      rl.close();
-      resolve(ans.trim());
-    })
-  );
 }
 
 async function n8nRequest(endpoint: string, method: string = "GET", body?: any) {
@@ -66,17 +53,17 @@ async function getOrCreateCredential(name: string, type: string, data: any) {
     const credsList = await n8nRequest("/api/v1/credentials");
     const existingCred = credsList.data.find((c: any) => c.name === name && c.type === type);
     if (existingCred) {
-      console.log(`Reusing existing credential: ${name} (ID: ${existingCred.id})`);
-      return existingCred.id;
-    } else {
-      const newCred = await n8nRequest("/api/v1/credentials", "POST", {
-        name,
-        type,
-        data,
-      });
-      console.log(`Created new credential: ${name} (ID: ${newCred.id})`);
-      return newCred.id;
+      console.log(`Deleting existing credential: ${name} (ID: ${existingCred.id})...`);
+      await n8nRequest(`/api/v1/credentials/${existingCred.id}`, "DELETE");
     }
+    
+    const newCred = await n8nRequest("/api/v1/credentials", "POST", {
+      name,
+      type,
+      data,
+    });
+    console.log(`Created new credential: ${name} (ID: ${newCred.id})`);
+    return newCred.id;
   } catch (err: any) {
     console.error(`Error setting up credential ${name}:`, err.message);
     process.exit(1);
@@ -151,66 +138,115 @@ function getProviderConfig(provider: string, apiKey: string, modelName: string):
   }
 }
 
+function normalizeProvider(provider: string): string {
+  const p = provider.trim().toLowerCase();
+  if (p === "1" || p === "deepseek") return "1";
+  if (p === "2" || p === "openai") return "2";
+  if (p === "3" || p === "gemini" || p === "google") return "3";
+  if (p === "4" || p === "anthropic" || p === "claude") return "4";
+  throw new Error(`Invalid provider: "${provider}". Choose from: deepseek (1), openai (2), gemini (3), anthropic (4)`);
+}
+
+function getDefaultModel(provider: string): string {
+  if (provider === "1") return "deepseek-chat";
+  if (provider === "2") return "gpt-4o-mini";
+  if (provider === "3") return "gemini-1.5-flash";
+  if (provider === "4") return "claude-3-5-sonnet-latest";
+  throw new Error(`Invalid provider choice: ${provider}`);
+}
+
+function getApiKeyFromEnv(provider: string): string {
+  if (provider === "1") return process.env.DEEPSEEK_API_KEY || "";
+  if (provider === "2") return process.env.OPENAI_API_KEY || "";
+  if (provider === "3") return process.env.GEMINI_API_KEY || "";
+  if (provider === "4") return process.env.ANTHROPIC_API_KEY || "";
+  return "";
+}
+
+function printUsage() {
+  console.log(`
+Usage: npx tsx scripts/deploy-n8n-v2.ts [options]
+
+Options:
+  --primary-provider=<name|num>   Primary LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: gemini]
+  --primary-model=<model_name>    Primary model name [default based on provider]
+  --primary-key=<api_key>         Primary API key [default: loaded from environment]
+  --fallback                      Enable fallback LLM model [default: false]
+  --fallback-provider=<name|num>  Fallback LLM provider (1/deepseek, 2/openai, 3/gemini/google, 4/anthropic/claude) [default: deepseek]
+  --fallback-model=<model_name>   Fallback model name [default based on provider]
+  --fallback-key=<api_key>        Fallback API key [default: loaded from environment]
+  -h, --help                      Show this help message
+`);
+}
+
 async function main() {
-  console.log("\n==================================================");
-  console.log("Welcome to interactive n8n workflow deployment");
-  console.log("==================================================");
+  // Parse command line arguments
+  const args: any = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === "--help" || arg === "-h") {
+      printUsage();
+      process.exit(0);
+    }
+    if (arg.startsWith("--")) {
+      const parts = arg.slice(2).split("=");
+      const key = parts[0];
+      const val = parts.length > 1 ? parts[1] : true;
+      args[key] = val;
+    }
+  }
 
-  // 1. Ask for Primary Provider
-  console.log("\nSelect Primary LLM Provider:");
-  console.log("1. Deepseek (Native Node)");
-  console.log("2. OpenAI (Standard)");
-  console.log("3. Google Gemini");
-  console.log("4. Anthropic");
-  const primaryProviderChoice = (await askQuestion("Enter choice (1-4) [default: 3]: ")) || "3";
+  console.log("Running in non-interactive mode using CLI flags.");
 
-  let defaultModel = "gemini-1.5-flash";
-  if (primaryProviderChoice === "1") defaultModel = "deepseek-chat";
-  else if (primaryProviderChoice === "2") defaultModel = "gpt-4o-mini";
-  else if (primaryProviderChoice === "4") defaultModel = "claude-3-5-sonnet-latest";
-
-  const primaryModelName = (await askQuestion(`Enter primary model name [default: ${defaultModel}]: `)) || defaultModel;
-
-  let defaultKey = "";
-  if (primaryProviderChoice === "1") defaultKey = process.env.DEEPSEEK_API_KEY || "";
-  else if (primaryProviderChoice === "3") defaultKey = process.env.GEMINI_API_KEY || "";
-
-  const primaryApiKey = (await askQuestion(`Enter API key [default: ${defaultKey ? "Loaded from .env" : "None"}]: `)) || defaultKey;
-  if (!primaryApiKey) {
-    console.error("Primary API Key is required.");
+  let primaryProviderChoice: string;
+  try {
+    primaryProviderChoice = normalizeProvider(String(args["primary-provider"] || "gemini"));
+  } catch (err: any) {
+    console.error(err.message);
+    printUsage();
     process.exit(1);
   }
 
-  // 2. Ask for Fallback Provider
-  const configureFallback = ((await askQuestion("\nDo you want to configure a Fallback LLM Model? (y/n) [default: n]: ")) || "n").toLowerCase() === "y";
+  const primaryModelName = String(args["primary-model"] || getDefaultModel(primaryProviderChoice));
+  const primaryApiKey = String(args["primary-key"] || getApiKeyFromEnv(primaryProviderChoice));
+
+  if (!primaryApiKey) {
+    console.error(`Error: API Key for primary provider (${primaryProviderChoice}) is required.`);
+    console.error(`Please provide --primary-key=<key> or set the corresponding environment variable (e.g. GEMINI_API_KEY).`);
+    printUsage();
+    process.exit(1);
+  }
+
+  const configureFallback = args["fallback"] === true || args["fallback"] === "true";
   let fallbackProviderChoice = "";
   let fallbackModelName = "";
   let fallbackApiKey = "";
 
   if (configureFallback) {
-    console.log("\nSelect Fallback LLM Provider:");
-    console.log("1. Deepseek (Native Node)");
-    console.log("2. OpenAI (Standard)");
-    console.log("3. Google Gemini");
-    console.log("4. Anthropic");
-    fallbackProviderChoice = (await askQuestion("Enter choice (1-4) [default: 1]: ")) || "1";
-
-    let defaultFallbackModel = "deepseek-chat";
-    if (fallbackProviderChoice === "2") defaultFallbackModel = "gpt-4o-mini";
-    else if (fallbackProviderChoice === "3") defaultFallbackModel = "gemini-1.5-flash";
-    else if (fallbackProviderChoice === "4") defaultFallbackModel = "claude-3-5-sonnet-latest";
-
-    fallbackModelName = (await askQuestion(`Enter fallback model name [default: ${defaultFallbackModel}]: `)) || defaultFallbackModel;
-
-    let defaultFallbackKey = "";
-    if (fallbackProviderChoice === "1") defaultFallbackKey = process.env.DEEPSEEK_API_KEY || "";
-    else if (fallbackProviderChoice === "3") defaultFallbackKey = process.env.GEMINI_API_KEY || "";
-
-    fallbackApiKey = (await askQuestion(`Enter fallback API key [default: ${defaultFallbackKey ? "Loaded from .env" : "None"}]: `)) || defaultFallbackKey;
-    if (!fallbackApiKey) {
-      console.error("Fallback API Key is required.");
+    try {
+      fallbackProviderChoice = normalizeProvider(String(args["fallback-provider"] || "deepseek"));
+    } catch (err: any) {
+      console.error(err.message);
+      printUsage();
       process.exit(1);
     }
+
+    fallbackModelName = String(args["fallback-model"] || getDefaultModel(fallbackProviderChoice));
+    fallbackApiKey = String(args["fallback-key"] || getApiKeyFromEnv(fallbackProviderChoice));
+
+    if (!fallbackApiKey) {
+      console.error(`Error: API Key for fallback provider (${fallbackProviderChoice}) is required when fallback is enabled.`);
+      console.error(`Please provide --fallback-key=<key> or set the corresponding environment variable (e.g. DEEPSEEK_API_KEY).`);
+      printUsage();
+      process.exit(1);
+    }
+  }
+
+  console.log(`Primary Provider: ${primaryProviderChoice} (${primaryModelName})`);
+  if (configureFallback) {
+    console.log(`Fallback Provider: ${fallbackProviderChoice} (${fallbackModelName})`);
+  } else {
+    console.log("Fallback Provider: Disabled");
   }
 
   console.log("\nDeploying credentials to n8n...");
@@ -325,21 +361,21 @@ async function main() {
           },
         ],
       },
-      options: {
-        includeOtherFields: false, // Drop other fields to cleanly match schema
-      },
+      include: "none",
+      options: {},
     },
     id: "format-data",
     name: "Format Evaluation Data",
     type: "n8n-nodes-base.set",
-    typeVersion: 3,
+    typeVersion: 3.4,
     position: [700, 300],
   };
 
   const supabaseInsertNode = {
     parameters: {
-      operation: "insert",
-      table: "scores",
+      operation: "create",
+      tableId: "scores",
+      dataToSend: "autoMapInputData",
       options: {},
     },
     id: "supabase-insert",
@@ -505,7 +541,7 @@ async function main() {
   console.log(`Activating workflow (ID: ${deployResult.id})...`);
   await n8nRequest(`/api/v1/workflows/${deployResult.id}/activate`, "POST");
 
-  const webhookUrl = `${N8N_HOST}/webhook/${deployResult.id}/webhook/evaluate-candidate`;
+  const webhookUrl = `${N8N_HOST}/webhook/evaluate-candidate`;
   console.log("\n==============================================");
   console.log("DEPLOYMENT COMPLETE");
   console.log("==============================================");

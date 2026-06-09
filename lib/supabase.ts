@@ -17,8 +17,15 @@ export const supabase = createClient(supabaseUrl, supabasePublishableKey);
 // Server-side admin/secret Supabase client
 export const createServerSupabaseClient = () => {
   const secretKey = process.env.SUPABASE_SECRET_KEY;
-  if (!secretKey) {
-    throw new Error("Missing env.SUPABASE_SECRET_KEY");
+  const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  
+  // Use secret key if available and not a placeholder; otherwise fall back to publishable key
+  const activeKey = (secretKey && secretKey !== "sb_secret_your_secret_key") 
+    ? secretKey 
+    : publishableKey;
+
+  if (!activeKey) {
+    throw new Error("Missing env.SUPABASE_SECRET_KEY or SUPABASE_PUBLISHABLE_KEY");
   }
-  return createClient(supabaseUrl, secretKey);
+  return createClient(supabaseUrl, activeKey);
 };

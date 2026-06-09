@@ -88,9 +88,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const isTest = formData.get("isTest") === "true";
+
     // Call n8n webhook
     let n8nResponseData = null;
-    const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
+    let webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
+    if (isTest && webhookUrl) {
+      webhookUrl = webhookUrl.replace("/webhook/", "/webhook-test/");
+    }
+
     if (webhookUrl) {
       try {
         const n8nResponse = await fetch(webhookUrl, {

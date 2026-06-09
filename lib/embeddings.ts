@@ -9,14 +9,14 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   try {
     const start = Date.now();
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${apiKey}`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "models/text-embedding-004",
+          model: "models/gemini-embedding-001",
           content: {
             parts: [{ text }],
           },
@@ -41,15 +41,21 @@ export async function generateEmbedding(text: string): Promise<number[]> {
       originalDimension: embedding.length,
     }, Date.now() - start);
 
-    // Gemini text-embedding-004 outputs 768 dimensions.
-    // Pad with zeros to fit database vector(1536) schema limit.
+    // Adapt embedding dimensionality dynamically to fit the database vector(1536) schema limit.
     const targetDimension = 1536;
-    const paddedEmbedding = [...embedding];
-    while (paddedEmbedding.length < targetDimension) {
-      paddedEmbedding.push(0.0);
+    let finalEmbedding = [...embedding];
+
+    if (finalEmbedding.length > targetDimension) {
+      // Truncate (Matryoshka Representation Learning allows this without loss of semantic meaning)
+      finalEmbedding = finalEmbedding.slice(0, targetDimension);
+    } else {
+      // Pad with zeros if the embedding is smaller
+      while (finalEmbedding.length < targetDimension) {
+        finalEmbedding.push(0.0);
+      }
     }
 
-    return paddedEmbedding;
+    return finalEmbedding;
   } catch (error) {
     Logger.error("Failed to generate embedding", error);
     throw error;
