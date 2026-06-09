@@ -1,0 +1,5 @@
+{
+  "name": "recruitment-plugin",
+  "description": "Team of recruitment subagents for parsing CVs, semantic ranking, and validating Next.js Supabase ATS projects.",
+  "version": "1.0.0"
+}

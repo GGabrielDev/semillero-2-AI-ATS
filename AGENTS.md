@@ -402,3 +402,14 @@ n8n_update_partial_workflow({
 20. **n8n-nodes-base.executeWorkflowTrigger** - Sub-workflow calls
 
 **Note:** LangChain nodes use the `@n8n/n8n-nodes-langchain.` prefix, core nodes use `n8n-nodes-base.`
+
+## Harness: Recruitment
+
+**Goal:** Automatic CV ingestion, semantic vector ranking, interview routing, and stage validation for the AI Recruitment Platform.
+
+**Trigger:** Use the `recruitment-orchestrator` skill when setting up, editing, or validating recruitment workflows, database migrations, frontend components, or dashboard pages.
+
+**Change Log:**
+| Date | Change | Target | Reason |
+| :--- | :--- | :--- | :--- |
+| 2026-06-09 | Initial Harness Configuration | All | Establish subagents and skills for development, database, and quality validation |
