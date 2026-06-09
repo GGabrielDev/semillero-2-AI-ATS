@@ -465,14 +465,14 @@ async function main() {
 
     wNodes.push(fallbackModelNode);
 
-    // Connect fallback model directly: source port is ai_languageModel, target port is ai_fallbackModel!
+    // Connect fallback model directly: source port is ai_languageModel, target port is ai_languageModel (index 1)!
     wConnections["Fallback Chat Model"] = {
       ai_languageModel: [
         [
           {
             node: "LLM Chain Evaluation (Primary)",
-            type: "ai_fallbackModel",
-            index: 0,
+            type: "ai_languageModel",
+            index: 1,
           },
         ],
       ],
