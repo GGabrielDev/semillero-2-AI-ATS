@@ -257,16 +257,18 @@ async function main() {
 
   const primaryChainNode = {
     parameters: {
-      promptType: "define",             // Correct underlying value for manually defining prompt!
+      promptType: "define",                 // Correct underlying value for manually defining prompt!
       hasOutputParser: true,           // Enforce "Require Specific Output Format"
-      hasFallbackModel: configureFallback, // Enable fallback model natively on the Chain node!
+      needsFallback: configureFallback,       // True underlying parameter to enable Fallback Model in v1.8+
+      enableFallbackModel: configureFallback, // True underlying key to enable fallback model (backward compatibility)
+      hasFallbackModel: configureFallback,    // Secondary key for fallback model (safeguard)
       text: "={{ $('Webhook Trigger').item.json.body.text }}",
       systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
     },
     id: "llm-chain-primary",
     name: "LLM Chain Evaluation (Primary)",
     type: "@n8n/n8n-nodes-langchain.chainLlm",
-    typeVersion: 1.4,
+    typeVersion: 1.9,
     position: [400, 300],
   };
 
@@ -402,7 +404,7 @@ async function main() {
         [
           {
             node: "LLM Chain Evaluation (Primary)",
-            type: "outputParser",
+            type: "ai_outputParser", // Correct destination port type!
             index: 0,
           },
         ],
