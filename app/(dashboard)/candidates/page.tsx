@@ -580,7 +580,7 @@ export default function CandidatesPage() {
                     className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
                       searchField === "name"
                         ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                     }`}
                   >
                     {lang === "en" ? "Name" : "Nombre"}
@@ -590,7 +590,7 @@ export default function CandidatesPage() {
                     className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
                       searchField === "email"
                         ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                     }`}
                   >
                     {lang === "en" ? "Email" : "Correo"}
@@ -600,7 +600,7 @@ export default function CandidatesPage() {
                     className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
                       searchField === "skills"
                         ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                     }`}
                   >
                     {lang === "en" ? "Skills" : "Habilidades"}

@@ -58,16 +58,16 @@ export default function DashboardLayout({
             {/* Language Toggle */}
             <button
               onClick={toggleLanguage}
-              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
-              title={lang === "en" ? "Switch to Spanish" : "Cambiar a Inglés"}
+              className="h-8 px-2.5 text-xs font-bold rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors flex items-center justify-center cursor-pointer"
+              title={lang === "en" ? "Language: English (Click to switch to Spanish)" : "Idioma: Español (Clic para cambiar a Inglés)"}
             >
-              {lang === "en" ? "ES" : "EN"}
+              {lang === "en" ? "EN" : "ES"}
             </button>
 
             {/* Dark Mode Toggle */}
             <button
               onClick={toggleTheme}
-              className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+              className="h-8 w-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors flex items-center justify-center cursor-pointer"
               aria-label={lang === "en" ? "Toggle theme" : "Cambiar tema"}
               title={lang === "en" ? "Toggle light/dark mode" : "Cambiar modo claro/oscuro"}
             >

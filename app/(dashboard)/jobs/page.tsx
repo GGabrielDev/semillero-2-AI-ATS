@@ -930,7 +930,7 @@ export default function JobsPage() {
                           {missingSkills.map((skill: string) => (
                             <span
                               key={skill}
-                              className="px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 border-dashed text-slate-400 dark:text-slate-500 text-xs rounded-md"
+                              className="px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 border-dashed text-slate-400 dark:text-slate-500 text-xs rounded-md"
                             >
                               {skill} ({t.missing})
                             </span>

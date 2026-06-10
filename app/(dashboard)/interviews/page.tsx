@@ -232,7 +232,7 @@ export default function InterviewsPage() {
                       onChange={(e) =>
                         handleStateChange(interview.id, "stage", e.target.value)
                       }
-                      className="px-2 py-1 text-sm bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-none"
+                      className="px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-none"
                     >
                       <option value="Screening">{t.screening}</option>
                       <option value="Technical">{t.technical}</option>
@@ -260,7 +260,7 @@ export default function InterviewsPage() {
                     }
                     placeholder={t.feedbackPlaceholder}
                     rows={3}
-                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-850 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-800 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none"
                   />
                 </div>
 
