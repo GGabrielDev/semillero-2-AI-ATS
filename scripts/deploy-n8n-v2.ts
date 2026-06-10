@@ -573,6 +573,85 @@ async function main() {
   };
 
 
+  // BRANCH D: AI Next Step Suggestion Webhook Branch
+  const suggestWebhookNode = {
+    parameters: {
+      httpMethod: "POST",
+      path: "suggest-next-steps",
+      responseMode: "responseNode",
+      options: {},
+    },
+    id: "suggest-webhook-trigger",
+    name: "Webhook Trigger - Suggest",
+    type: "n8n-nodes-base.webhook",
+    typeVersion: 1.1,
+    position: [100, 1400],
+  };
+
+  const suggestChainNode = {
+    parameters: {
+      promptType: "define",
+      hasOutputParser: false,
+      needsFallback: configureFallback,
+      enableFallbackModel: configureFallback,
+      hasFallbackModel: configureFallback,
+      text: "=Candidate Name: {{ $('Webhook Trigger - Suggest').item.json.body.candidateName }}\nVacancy: {{ $('Webhook Trigger - Suggest').item.json.body.jobTitle }}\nCurrent Stage: {{ $('Webhook Trigger - Suggest').item.json.body.currentStage }}\nCandidate Summary: {{ $('Webhook Trigger - Suggest').item.json.body.candidateSummary || 'None provided' }}\nCandidate Skills: {{ JSON.stringify($('Webhook Trigger - Suggest').item.json.body.candidateSkills || []) }}\nJob Requirements: {{ $('Webhook Trigger - Suggest').item.json.body.jobRequirements || 'None provided' }}\n\nComments History:\n{{ JSON.stringify($('Webhook Trigger - Suggest').item.json.body.commentHistory || []) }}",
+      systemMessage: "You are an AI recruitment co-pilot. Suggest the next step for this candidate in their interview process. Requirements:\n1. MUST be extremely brief and concise (max 3-4 bullet points).\n2. MUST focus on actionable suggestions based on their current stage, comment history, and candidate profile.\n3. Respond in Spanish if the body.lang parameter is 'es', otherwise English.\n4. Use standard Markdown formatting. Do not include any pre-text or post-text. Return only the markdown content.",
+    },
+    id: "suggest-llm-chain",
+    name: "LLM Chain Suggestion (Next Steps)",
+    type: "@n8n/n8n-nodes-langchain.chainLlm",
+    typeVersion: 1.9,
+    position: [400, 1400],
+  };
+
+  const suggestPrimaryModelNode = {
+    parameters: primaryConfig.nodeParameters,
+    id: "suggest-primary-model",
+    name: "Primary Chat Model - Suggest",
+    type: primaryConfig.nodeType,
+    typeVersion: 1,
+    position: [300, 1580],
+    credentials: {
+      [primaryConfig.credentialType]: {
+        id: primaryCredId,
+        name: `Semillero2_Primary_${primaryConfig.credentialType}`,
+      },
+    },
+  };
+
+  const suggestSetNode = {
+    parameters: {
+      assignments: {
+        assignments: [
+          {
+            name: "suggestion",
+            value: "={{ $json.text }}",
+            type: "string",
+          },
+        ],
+      },
+      include: "none",
+      options: {},
+    },
+    id: "suggest-format-data",
+    name: "Format Suggestion Data",
+    type: "n8n-nodes-base.set",
+    typeVersion: 3.4,
+    position: [700, 1400],
+  };
+
+  const suggestRespondWebhookNode = {
+    parameters: {
+      options: {},
+    },
+    id: "suggest-respond-webhook",
+    name: "Respond to Webhook - Suggest",
+    type: "n8n-nodes-base.respondToWebhook",
+    typeVersion: 1.1,
+    position: [900, 1400],
+  };
+
   // Base nodes array
   const wNodes: any[] = [
     evalWebhookNode,
@@ -594,7 +673,13 @@ async function main() {
     profileJobChainNode,
     profileJobPrimaryModelNode,
     profileJobJsonParserNode,
-    profileJobRespondWebhookNode
+    profileJobRespondWebhookNode,
+
+    suggestWebhookNode,
+    suggestChainNode,
+    suggestPrimaryModelNode,
+    suggestSetNode,
+    suggestRespondWebhookNode
   ];
 
   // Base connections map
@@ -775,6 +860,52 @@ async function main() {
           },
         ],
       ],
+    },
+
+    // BRANCH D
+    "Webhook Trigger - Suggest": {
+      main: [
+        [
+          {
+            node: "LLM Chain Suggestion (Next Steps)",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Primary Chat Model - Suggest": {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Suggestion (Next Steps)",
+            type: "ai_languageModel",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "LLM Chain Suggestion (Next Steps)": {
+      main: [
+        [
+          {
+            node: "Format Suggestion Data",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Format Suggestion Data": {
+      main: [
+        [
+          {
+            node: "Respond to Webhook - Suggest",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
     }
   };
 
@@ -859,6 +990,35 @@ async function main() {
         [
           {
             node: "LLM Chain Profiling (Job)",
+            type: "ai_languageModel",
+            index: 1,
+          },
+        ],
+      ],
+    };
+
+    const suggestFallbackModelNode = {
+      parameters: fallbackConfig.nodeParameters,
+      id: "suggest-fallback-model",
+      name: "Fallback Chat Model - Suggest",
+      type: fallbackConfig.nodeType,
+      typeVersion: 1,
+      position: [560, 1580],
+      credentials: {
+        [fallbackConfig.credentialType]: {
+          id: fallbackCredId,
+          name: `Semillero2_Fallback_${fallbackConfig.credentialType}`,
+        },
+      },
+    };
+
+    wNodes.push(suggestFallbackModelNode);
+
+    wConnections["Fallback Chat Model - Suggest"] = {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Suggestion (Next Steps)",
             type: "ai_languageModel",
             index: 1,
           },
