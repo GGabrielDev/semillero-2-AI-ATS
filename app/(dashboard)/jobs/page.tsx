@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useApp } from "@/components/AppContext";
 
 interface Job {
   id: string;
@@ -102,7 +103,131 @@ interface DuplicateState {
   onResolve: (action: "overwrite" | "ignore" | "cancel") => void;
 }
 
+const translations = {
+  en: {
+    createVacancy: "Create Vacancy",
+    jobTitle: "Job Title",
+    jobTitlePlaceholder: "e.g., Senior React Developer",
+    requirementsText: "Requirements text",
+    requirementsPlaceholder: "Describe key candidate qualifications and tech stack...",
+    creating: "Creating...",
+    createVacancyBtn: "Create Vacancy",
+    jobVacancies: "Job Vacancies",
+    loadingJobs: "Loading jobs...",
+    noVacancies: "No vacancies created yet.",
+    createdDate: "Created",
+    vacancyDetails: "Vacancy Details",
+    vacancyId: "ID",
+    description: "Description",
+    extractedSkills: "Extracted Job Keywords / Required Skills",
+    noSkillsExtracted: "No required skills extracted for this job yet.",
+    uploadCvTitle: "Upload Candidate CV for this Vacancy (PDF)",
+    uploadCvDesc: "Uploading a candidate CV parses the text and extracts their skills/profile. It associates them with this job, enabling you to check skills overlap before running the deep AI score model.",
+    uploadingButton: "Uploading CVs...",
+    uploadButton: "Choose CV Files",
+    uploadProgress: "Upload Progress",
+    success: "Success",
+    error: "Error",
+    uploading: "Uploading...",
+    showingMatches: "Showing {count} qualified matches",
+    unevaluatedCount: "({count} unevaluated)",
+    bulkRunAi: "Bulk Run AI Evaluation ({count})",
+    evaluating: "Evaluating...",
+    findingMatches: "Finding matches...",
+    noActiveMatches: "No active potential matches found.",
+    noActiveMatchesDesc: "Upload CVs or check the mismatch/unqualified list below.",
+    mismatchedOrUnqualified: "Mismatched or Unqualified Candidates",
+    selectVacancyToGetStarted: "Select or create a job vacancy to get started",
+    selectVacancyToGetStartedDesc: "Use the sidebar panel to choose a vacancy or fill in the form to establish a new open position.",
+    potentialMatch: "Potential Match ({pct}% overlap)",
+    skillMismatch: "Skill Mismatch ({pct}% overlap)",
+    semanticSimilarity: "Semantic: {pct}%",
+    skillsCheck: "Skills Check: {count} of {total} matching",
+    missing: "missing",
+    aiAssessmentResult: "AI ASSESSMENT RESULT",
+    decision: "Decision",
+    score: "Score",
+    readyForDeepAssessment: "Ready for deep assessment. Only potential matches recommended for LLM budget optimization.",
+    reRunAi: "Re-run AI",
+    runAiEvaluation: "Run AI Evaluation",
+    promoted: "Promoted",
+    promoteToInterviews: "Promote to Interviews",
+    duplicateDetected: "Duplicate Candidate Detected",
+    duplicateMsg: "The system detected an existing candidate with the same email or name.",
+    existingProfile: "Existing Profile",
+    newProfile: "Newly Uploaded Profile",
+    aiComparison: "AI Comparison Summary",
+    comparingWithAi: "Comparing profiles with AI...",
+    cancel: "Cancel",
+    keepBoth: "Keep Both",
+    overwrite: "Overwrite",
+    requiredFields: "All fields are required"
+  },
+  es: {
+    createVacancy: "Crear Vacante",
+    jobTitle: "Título del Puesto",
+    jobTitlePlaceholder: "ej., Desarrollador Senior React",
+    requirementsText: "Texto de requisitos",
+    requirementsPlaceholder: "Describa las cualificaciones clave del candidato y el stack tecnológico...",
+    creating: "Creando...",
+    createVacancyBtn: "Crear Vacante",
+    jobVacancies: "Vacantes de Empleo",
+    loadingJobs: "Cargando puestos...",
+    noVacancies: "Aún no se han creado vacantes.",
+    createdDate: "Creado",
+    vacancyDetails: "Detalles de la Vacante",
+    vacancyId: "ID",
+    description: "Descripción",
+    extractedSkills: "Palabras Clave Extraídas / Habilidades Requeridas",
+    noSkillsExtracted: "Aún no se han extraído habilidades requeridas para este puesto.",
+    uploadCvTitle: "Cargar CV de Candidato para esta Vacante (PDF)",
+    uploadCvDesc: "Al cargar el CV de un candidato se analiza el texto y se extraen sus habilidades/perfil. Se asocia con este puesto, lo que permite verificar la coincidencia de habilidades antes de ejecutar el modelo de puntuación de IA profunda.",
+    uploadingButton: "Cargando CVs...",
+    uploadButton: "Elegir Archivos de CV",
+    uploadProgress: "Progreso de Carga",
+    success: "Éxito",
+    error: "Error",
+    uploading: "Cargando...",
+    showingMatches: "Mostrando {count} coincidencias calificadas",
+    unevaluatedCount: "({count} sin evaluar)",
+    bulkRunAi: "Evaluación Masiva de IA ({count})",
+    evaluating: "Evaluando...",
+    findingMatches: "Buscando coincidencias...",
+    noActiveMatches: "No se encontraron coincidencias potenciales activas.",
+    noActiveMatchesDesc: "Cargue CVs o revise la lista de no coincidentes/no calificados a continuación.",
+    mismatchedOrUnqualified: "Candidatos No Coincidentes o No Calificados",
+    selectVacancyToGetStarted: "Seleccione o cree una vacante de empleo para comenzar",
+    selectVacancyToGetStartedDesc: "Use el panel lateral para elegir una vacante o complete el formulario para establecer un nuevo puesto abierto.",
+    potentialMatch: "Coincidencia Potencial ({pct}% coincidencia)",
+    skillMismatch: "Falta de Coincidencia ({pct}% coincidencia)",
+    semanticSimilarity: "Semántico: {pct}%",
+    skillsCheck: "Verificación: {count} de {total} coincidentes",
+    missing: "falta",
+    aiAssessmentResult: "RESULTADO DE LA EVALUACIÓN DE IA",
+    decision: "Decisión",
+    score: "Puntaje",
+    readyForDeepAssessment: "Listo para evaluación profunda. Solo se recomiendan coincidencias potenciales para optimización del presupuesto de LLM.",
+    reRunAi: "Re-evaluar IA",
+    runAiEvaluation: "Evaluar con IA",
+    promoted: "Promocionado",
+    promoteToInterviews: "Promocionar a Entrevistas",
+    duplicateDetected: "Candidato Duplicado Detectado",
+    duplicateMsg: "El sistema detectó un candidato existente con el mismo correo o nombre.",
+    existingProfile: "Perfil Existente",
+    newProfile: "Nuevo Perfil Cargado",
+    aiComparison: "Resumen de Comparación de IA",
+    comparingWithAi: "Comparando perfiles con IA...",
+    cancel: "Cancelar",
+    keepBoth: "Conservar Ambos",
+    overwrite: "Sobrescribir",
+    requiredFields: "Todos los campos son obligatorios"
+  }
+};
+
 export default function JobsPage() {
+  const { lang } = useApp();
+  const t = translations[lang];
+
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [matches, setMatches] = useState<Candidate[]>([]);
@@ -498,55 +623,55 @@ export default function JobsPage() {
       {/* Left Column: Create Form & Vacancies List */}
       <div className="lg:col-span-1 flex flex-col gap-6">
         {/* Create vacancy form */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-          <h2 className="text-lg font-bold text-slate-900 mb-4">Create Vacancy</h2>
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t.createVacancy}</h2>
           <form onSubmit={handleCreateJob} className="flex flex-col gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                Job Title
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                {t.jobTitle}
               </label>
               <input
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="e.g., Senior React Developer"
-                className="w-full px-3 py-2 border border-slate-200 rounded-md text-slate-900 bg-white placeholder:text-slate-500 text-sm focus:outline-none"
+                placeholder={t.jobTitlePlaceholder}
+                className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-800 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                Requirements text
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                {t.requirementsText}
               </label>
               <textarea
                 value={newRequirements}
                 onChange={(e) => setNewRequirements(e.target.value)}
-                placeholder="Describe key candidate qualifications and tech stack..."
+                placeholder={t.requirementsPlaceholder}
                 rows={4}
-                className="w-full px-3 py-2 border border-slate-200 rounded-md text-slate-900 bg-white placeholder:text-slate-500 text-sm focus:outline-none"
+                className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-800 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none"
                 required
               />
             </div>
             {formError && (
-              <p className="text-xs text-red-600 font-semibold">{formError}</p>
+              <p className="text-xs text-red-600 dark:text-red-400 font-semibold">{formError}</p>
             )}
             <button
               type="submit"
               disabled={isSubmitting}
               className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-md transition duration-200 disabled:opacity-50"
             >
-              {isSubmitting ? "Creating..." : "Create Vacancy"}
+              {isSubmitting ? t.creating : t.createVacancyBtn}
             </button>
           </form>
         </div>
 
         {/* Vacancy list */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex-1">
-          <h2 className="text-lg font-bold text-slate-900 mb-4">Job Vacancies</h2>
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex-1">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t.jobVacancies}</h2>
           {loadingJobs ? (
-            <p className="text-slate-500 text-sm">Loading jobs...</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm">{t.loadingJobs}</p>
           ) : jobs.length === 0 ? (
-            <p className="text-slate-500 text-sm">No vacancies created yet.</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm">{t.noVacancies}</p>
           ) : (
             <div className="flex flex-col gap-2">
               {jobs.map((job) => (
@@ -559,13 +684,13 @@ export default function JobsPage() {
                   }}
                   className={`w-full text-left p-3 rounded-md border text-sm transition duration-200 ${
                     selectedJob?.id === job.id
-                      ? "border-blue-600 bg-slate-50 font-semibold"
-                      : "border-slate-200 hover:border-slate-300"
+                      ? "border-blue-600 bg-slate-50 dark:bg-slate-800/50 dark:border-blue-500 font-semibold text-slate-900 dark:text-white"
+                      : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-slate-900 dark:text-slate-300 bg-white dark:bg-slate-900"
                   }`}
                 >
-                  <div className="text-slate-900">{job.title}</div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Created: {new Date(job.created_at).toLocaleDateString()}
+                  <div className="font-semibold">{job.title}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    {t.createdDate}: {new Date(job.created_at).toLocaleDateString()}
                   </div>
                 </button>
               ))}
@@ -577,40 +702,40 @@ export default function JobsPage() {
       {/* Right Column: Selected Job Details & Candidate Match */}
       <div className="lg:col-span-2">
         {selectedJob ? (
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-6">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col gap-6">
             {/* Header */}
             <div>
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Vacancy Details
+              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                {t.vacancyDetails}
               </div>
-              <h1 className="text-2xl font-bold text-slate-900 mt-1">
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
                 {selectedJob.title}
               </h1>
-              <p className="text-xs text-slate-500 mt-1">
-                ID: {selectedJob.id}
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {t.vacancyId}: {selectedJob.id}
               </p>
             </div>
 
             {/* Requirements & Extracted Job Skills */}
-            <div className="p-4 bg-slate-50 rounded-md border border-slate-200 flex flex-col gap-3">
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-md border border-slate-200 dark:border-slate-800 flex flex-col gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                  Description
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-1">
+                  {t.description}
                 </h3>
-                <p className="text-slate-600 text-sm whitespace-pre-wrap leading-relaxed">
+                <p className="text-slate-600 dark:text-slate-300 text-sm whitespace-pre-wrap leading-relaxed">
                   {selectedJob.requirements.text}
                 </p>
               </div>
               {selectedJob.requirements.skills && selectedJob.requirements.skills.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Extracted Job Keywords / Required Skills
+                  <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                    {t.extractedSkills}
                   </h3>
                   <div className="flex flex-wrap gap-1.5">
                     {selectedJob.requirements.skills.map((skill) => (
                       <span
                         key={skill}
-                        className="px-2 py-0.5 bg-white border border-slate-200 text-slate-700 text-xs rounded-md font-medium"
+                        className="px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs rounded-md font-medium"
                       >
                         {skill}
                       </span>
@@ -621,15 +746,15 @@ export default function JobsPage() {
             </div>
 
             {/* PDF Uploader */}
-            <div className="border border-dashed border-slate-200 rounded-lg p-6 flex flex-col items-center justify-center text-center">
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                Upload Candidate CV for this Vacancy (PDF)
+            <div className="border border-dashed border-slate-200 dark:border-slate-800 rounded-lg p-6 flex flex-col items-center justify-center text-center">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-1">
+                {t.uploadCvTitle}
               </h3>
-              <p className="text-xs text-slate-500 mb-4 max-w-md">
-                Uploading a candidate CV parses the text and extracts their skills/profile. It associates them with this job, enabling you to check skills overlap before running the deep AI score model.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 max-w-md">
+                {t.uploadCvDesc}
               </p>
               <label className="relative cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-200">
-                {uploading ? "Uploading CVs..." : "Choose CV Files"}
+                {uploading ? t.uploadingButton : t.uploadButton}
                 <input
                   type="file"
                   accept=".pdf"
@@ -640,46 +765,46 @@ export default function JobsPage() {
                 />
               </label>
               {uploadError && (
-                <p className="text-xs text-red-600 mt-3 font-semibold">
+                <p className="text-xs text-red-600 dark:text-red-400 mt-3 font-semibold">
                   {uploadError}
                 </p>
               )}
               {uploadSuccess && (
-                <p className="text-xs text-green-600 mt-3 font-semibold">
+                <p className="text-xs text-green-600 dark:text-green-400 mt-3 font-semibold">
                   {uploadSuccess}
                 </p>
               )}
               {uploadStatuses.length > 0 && (
-                <div className="mt-4 w-full max-w-md border border-slate-200 rounded-md p-4 bg-slate-50 text-left">
-                  <h4 className="text-xs font-semibold text-slate-900 mb-2 uppercase tracking-wider">
-                    Upload Progress
+                <div className="mt-4 w-full max-w-md border border-slate-200 dark:border-slate-800 rounded-md p-4 bg-slate-50 dark:bg-slate-800/50 text-left">
+                  <h4 className="text-xs font-semibold text-slate-900 dark:text-white mb-2 uppercase tracking-wider">
+                    {t.uploadProgress}
                   </h4>
-                  <ul className="divide-y divide-slate-200">
+                  <ul className="divide-y divide-slate-200 dark:divide-slate-800">
                     {uploadStatuses.map((item, idx) => (
                       <li key={idx} className="py-2 flex flex-col gap-1 text-xs">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-700 truncate max-w-[250px]" title={item.name}>
+                          <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[250px]" title={item.name}>
                             {item.name}
                           </span>
                           {item.status === "uploading" && (
-                            <span className="text-slate-600 font-semibold flex items-center gap-1">
+                            <span className="text-slate-600 dark:text-slate-400 font-semibold flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse"></span>
-                              Uploading...
+                              {t.uploading}
                             </span>
                           )}
                           {item.status === "success" && (
-                            <span className="text-green-600 font-semibold flex items-center gap-1">
-                              ✓ Success
+                            <span className="text-green-600 dark:text-green-400 font-semibold flex items-center gap-1">
+                              ✓ {t.success}
                             </span>
                           )}
                           {item.status === "error" && (
-                            <span className="text-red-600 font-semibold flex items-center gap-1">
-                              ✗ Error
+                            <span className="text-red-600 dark:text-red-400 font-semibold flex items-center gap-1">
+                              ✗ {t.error}
                             </span>
                           )}
                         </div>
                         {item.errorMessage && (
-                          <p className="text-red-600 font-normal mt-0.5">{item.errorMessage}</p>
+                          <p className="text-red-650 dark:text-red-400 font-normal mt-0.5">{item.errorMessage}</p>
                         )}
                       </li>
                     ))}
@@ -747,17 +872,17 @@ export default function JobsPage() {
                   return (
                     <div
                       key={match.id}
-                      className="p-5 rounded-lg border border-slate-200 bg-white flex flex-col gap-4 shadow-sm hover:border-slate-300 transition duration-200"
+                      className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-4 shadow-sm hover:border-slate-300 dark:hover:border-slate-705 transition duration-200"
                     >
                       {/* Upper info panel */}
                       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex flex-col gap-1">
-                          <div className="text-slate-900 font-bold text-base">
+                          <div className="text-slate-900 dark:text-white font-bold text-base">
                             {match.name}
                           </div>
-                          <div className="text-xs text-slate-500">
-                            Email: <span className="text-slate-700 font-medium mr-3">{match.contact_info.email}</span>
-                            Phone: <span className="text-slate-700 font-medium">{match.contact_info.phone}</span>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Email: <span className="text-slate-700 dark:text-slate-300 font-medium mr-3">{match.contact_info.email}</span>
+                            Phone: <span className="text-slate-700 dark:text-slate-300 font-medium">{match.contact_info.phone}</span>
                           </div>
                         </div>
 
@@ -766,28 +891,28 @@ export default function JobsPage() {
                           <span
                             className={`px-2.5 py-1 text-xs font-semibold rounded-md border ${
                               isPotentialMatch
-                                ? "bg-green-50 text-green-700 border-green-200"
-                                : "bg-slate-50 text-slate-500 border-slate-200"
+                                ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-900/50"
+                                : "bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
                             }`}
                           >
                             {isPotentialMatch
-                              ? `Potential Match (${matchPct}% overlap)`
-                              : `Skill Mismatch (${matchPct}% overlap)`}
+                              ? t.potentialMatch.replace("{pct}", String(matchPct))
+                              : t.skillMismatch.replace("{pct}", String(matchPct))}
                           </span>
                           
                           {/* Semantic embedding similarity badge */}
                           {similarityPct !== null && (
-                            <span className="px-2.5 py-1 text-xs font-semibold rounded-md border bg-blue-50 text-blue-700 border-blue-200">
-                              Semantic: {similarityPct}%
+                            <span className="px-2.5 py-1 text-xs font-semibold rounded-md border bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-900/50">
+                              {t.semanticSimilarity.replace("{pct}", String(similarityPct))}
                             </span>
                           )}
                         </div>
                       </div>
 
                       {/* Skills overlap details */}
-                      <div className="bg-slate-50 p-3 rounded-md border border-slate-100 flex flex-col gap-2">
-                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                          Skills Check: {overlapCount} of {totalRequired} matching
+                      <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-md border border-slate-100 dark:border-slate-800 flex flex-col gap-2">
+                        <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                          {t.skillsCheck.replace("{count}", String(overlapCount)).replace("{total}", String(totalRequired))}
                         </div>
                         
                         <div className="flex flex-wrap gap-1.5">
@@ -795,7 +920,7 @@ export default function JobsPage() {
                           {matchedSkills.map((skill: string) => (
                             <span
                               key={skill}
-                              className="px-2 py-0.5 bg-green-100 text-green-800 border border-green-200 text-xs rounded-md font-medium"
+                              className="px-2 py-0.5 bg-green-100 dark:bg-green-955 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-800 text-xs rounded-md font-medium"
                             >
                               {skill}
                             </span>
@@ -805,41 +930,41 @@ export default function JobsPage() {
                           {missingSkills.map((skill: string) => (
                             <span
                               key={skill}
-                              className="px-2 py-0.5 bg-white border border-slate-200 border-dashed text-slate-400 text-xs rounded-md"
+                              className="px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 border-dashed text-slate-400 dark:text-slate-500 text-xs rounded-md"
                             >
-                              {skill} (missing)
+                              {skill} ({t.missing})
                             </span>
                           ))}
 
                           {/* Fallback if no skills are loaded */}
                           {jobSkills.length === 0 && (
-                            <span className="text-xs text-slate-500 italic">
-                              No required skills extracted for this job yet.
+                            <span className="text-xs text-slate-500 dark:text-slate-400 italic">
+                              {t.noSkillsExtracted}
                             </span>
                           )}
                         </div>
                       </div>
 
                       {/* Bottom evaluation / action panel */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-slate-100">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
                         <div className="flex-1">
                           {latestScore ? (
                             <div className="flex flex-col gap-1">
-                              <div className="text-xs text-slate-500">
-                                AI ASSESSMENT RESULT
+                              <div className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">
+                                {t.aiAssessmentResult}
                               </div>
-                              <div className="text-sm text-slate-700 font-medium">
-                                Decision: <span className="font-bold text-slate-900">{latestScore.evaluation.classification}</span>
-                                <span className="mx-2 font-normal text-slate-300">|</span>
-                                Score: <span className="font-bold text-blue-600 text-base">{latestScore.ai_score} / 100</span>
+                              <div className="text-sm text-slate-700 dark:text-slate-300 font-medium">
+                                {t.decision}: <span className="font-bold text-slate-900 dark:text-white">{latestScore.evaluation.classification}</span>
+                                <span className="mx-2 font-normal text-slate-300 dark:text-slate-700">|</span>
+                                {t.score}: <span className="font-bold text-blue-600 dark:text-blue-400 text-base">{latestScore.ai_score} / 100</span>
                               </div>
-                              <div className="text-xs text-slate-500 leading-normal max-w-lg mt-1">
+                              <div className="text-xs text-slate-500 dark:text-slate-400 leading-normal max-w-lg mt-1">
                                 {latestScore.evaluation.summary}
                               </div>
                             </div>
                           ) : (
-                            <div className="text-xs text-slate-500 italic">
-                              Ready for deep assessment. Only potential matches recommended for LLM budget optimization.
+                            <div className="text-xs text-slate-500 dark:text-slate-400 italic">
+                              {t.readyForDeepAssessment}
                             </div>
                           )}
                         </div>
@@ -849,19 +974,19 @@ export default function JobsPage() {
                           <button
                             onClick={() => handleEvaluate(match.id)}
                             disabled={evaluatingIds[match.id] || isBulkEvaluating}
-                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-md border border-slate-200 transition duration-200 disabled:opacity-50"
+                            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-md border border-slate-200 dark:border-slate-700 transition duration-200 disabled:opacity-50"
                           >
                             {evaluatingIds[match.id]
-                              ? "Evaluating..."
+                              ? t.evaluating
                               : latestScore
-                              ? "Re-run AI"
-                              : "Run AI Evaluation"}
+                              ? t.reRunAi
+                              : t.runAiEvaluation}
                           </button>
 
                           {/* Promote to Interview Pipeline */}
                           {match.interview ? (
-                            <span className="px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 text-xs font-semibold rounded-md">
-                              Promoted ({match.interview.stage})
+                            <span className="px-3 py-1.5 bg-green-50 dark:bg-green-955/30 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400 text-xs font-semibold rounded-md">
+                              {t.promoted} ({match.interview.stage})
                             </span>
                           ) : (
                             <button
@@ -872,16 +997,16 @@ export default function JobsPage() {
                                 isUnqualified ||
                                 !isPotentialMatch
                               }
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition duration-200 disabled:opacity-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:border disabled:border-slate-200"
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition duration-200 disabled:opacity-50 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 disabled:border disabled:border-slate-200 dark:disabled:border-slate-755"
                               title={
                                 isUnqualified
-                                  ? "Cannot promote unqualified candidates"
+                                  ? (lang === "es" ? "No se pueden promocionar candidatos no calificados" : "Cannot promote unqualified candidates")
                                   : !isPotentialMatch
-                                  ? "Skill overlap too low to promote"
-                                  : "Promote to Interviews"
+                                  ? (lang === "es" ? "Coincidencia de habilidades muy baja para promocionar" : "Skill overlap too low to promote")
+                                  : (lang === "es" ? "Promocionar a Entrevistas" : "Promote to Interviews")
                               }
                             >
-                              {promotingIds[match.id] ? "Promoting..." : "Promote to Interviews"}
+                              {promotingIds[match.id] ? (lang === "es" ? "Promocionando..." : "Promoting...") : t.promoteToInterviews}
                             </button>
                           )}
                         </div>
@@ -893,14 +1018,14 @@ export default function JobsPage() {
                 return (
                   <div className="flex flex-col gap-6">
                     {/* Toolbar / Header */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-600 text-sm font-semibold">
-                          Showing {visibleMatches.length} qualified matches
+                        <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold">
+                          {t.showingMatches.replace("{count}", String(visibleMatches.length))}
                         </span>
                         {visibleMatchesToEval.length > 0 && (
-                          <span className="text-xs text-slate-500 font-medium">
-                            ({visibleMatchesToEval.length} unevaluated)
+                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                            {t.unevaluatedCount.replace("{count}", String(visibleMatchesToEval.length))}
                           </span>
                         )}
                       </div>
@@ -914,10 +1039,10 @@ export default function JobsPage() {
                           {isBulkEvaluating ? (
                             <>
                               <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
-                              {bulkEvalProgress || "Evaluating..."}
+                              {bulkEvalProgress || t.evaluating}
                             </>
                           ) : (
-                            `Bulk Run AI Evaluation (${visibleMatchesToEval.length})`
+                            t.bulkRunAi.replace("{count}", String(visibleMatchesToEval.length))
                           )}
                         </button>
                       )}
@@ -925,11 +1050,11 @@ export default function JobsPage() {
 
                     {/* Visible Matches List */}
                     {loadingMatches ? (
-                      <p className="text-slate-500 text-sm">Finding matches...</p>
+                      <p className="text-slate-500 dark:text-slate-400 text-sm">{t.findingMatches}</p>
                     ) : visibleMatches.length === 0 && !loadingMatches ? (
-                      <div className="p-8 text-center border border-slate-100 rounded-lg bg-slate-50/50">
-                        <p className="text-slate-500 text-sm font-medium">No active potential matches found.</p>
-                        <p className="text-slate-400 text-xs mt-1">Upload CVs or check the mismatch/unqualified list below.</p>
+                      <div className="p-8 text-center border border-slate-100 dark:border-slate-800 rounded-lg bg-slate-50/50 dark:bg-slate-800/20">
+                        <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">{t.noActiveMatches}</p>
+                        <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">{t.noActiveMatchesDesc}</p>
                       </div>
                     ) : (
                       <div className="flex flex-col gap-4">
@@ -941,14 +1066,14 @@ export default function JobsPage() {
 
                     {/* Expandable Hidden Matches List */}
                     {hiddenMatches.length > 0 && (
-                      <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
                         <button
                           onClick={() => setShowHiddenCandidates(!showHiddenCandidates)}
-                          className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 transition duration-200 border-b border-slate-200"
+                          className="w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition duration-200 border-b border-slate-200 dark:border-slate-800"
                         >
-                          <div className="flex items-center gap-2 text-slate-700 font-semibold text-sm">
-                            <span>Mismatched or Unqualified Candidates</span>
-                            <span className="px-2 py-0.5 bg-slate-200 text-slate-800 text-xs rounded-full font-bold">
+                          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-semibold text-sm">
+                            <span>{t.mismatchedOrUnqualified}</span>
+                            <span className="px-2 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs rounded-full font-bold">
                               {hiddenMatches.length}
                             </span>
                           </div>
@@ -965,7 +1090,7 @@ export default function JobsPage() {
                         </button>
 
                         {showHiddenCandidates && (
-                          <div className="p-4 bg-slate-50/50 border-t border-slate-200 flex flex-col gap-4">
+                          <div className="p-4 bg-slate-50/50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-4">
                             {hiddenMatches.map(({ candidate, overlap }) =>
                               renderCandidateCard(candidate, overlap)
                             )}
@@ -979,12 +1104,12 @@ export default function JobsPage() {
             </div>
           </div>
         ) : (
-          <div className="bg-white p-12 rounded-lg shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
-            <p className="text-slate-600 font-semibold mb-2">
-              Select or create a job vacancy to get started
+          <div className="bg-white dark:bg-slate-900 p-12 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center text-center">
+            <p className="text-slate-600 dark:text-slate-300 font-semibold mb-2">
+              {t.selectVacancyToGetStarted}
             </p>
-            <p className="text-slate-500 text-xs max-w-sm">
-              Use the sidebar panel to choose a vacancy or fill in the form to establish a new open position.
+            <p className="text-slate-500 dark:text-slate-400 text-xs max-w-sm">
+              {t.selectVacancyToGetStartedDesc}
             </p>
           </div>
         )}
@@ -992,55 +1117,55 @@ export default function JobsPage() {
 
       {/* Duplicate Detection dialog */}
       {duplicateData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-lg shadow-md border border-slate-200 max-w-xl w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 dark:bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-md border border-slate-200 dark:border-slate-800 max-w-xl w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <div>
-              <h3 className="text-lg font-bold text-slate-900">
-                Duplicate Candidate Detected / Candidato Duplicado Detectado
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                {t.duplicateDetected}
               </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                The system detected an existing candidate with the same email or name. / El sistema detectó un candidato existente con el mismo correo o nombre. ({duplicateData.fileName})
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {t.duplicateMsg} ({duplicateData.fileName})
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               {/* Existing Profile */}
-              <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
-                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
-                  Existing Profile / Perfil Existente
+              <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-slate-50 dark:bg-slate-800/50">
+                <h4 className="text-xs font-semibold text-slate-900 dark:text-white uppercase tracking-wider mb-2">
+                  {t.existingProfile}
                 </h4>
-                <div className="text-sm font-bold text-slate-900">
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
                   {duplicateData.existingCandidate.name}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  Email: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.email}</span>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Email: <span className="text-slate-600 dark:text-slate-300 font-medium">{duplicateData.existingCandidate.contact_info.email}</span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  Phone: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.phone || "N/A"}</span>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Phone: <span className="text-slate-600 dark:text-slate-300 font-medium">{duplicateData.existingCandidate.contact_info.phone || "N/A"}</span>
                 </div>
                 {duplicateData.existingCandidate.contact_info.summary && (
-                  <p className="text-slate-600 mt-2 line-clamp-3">
+                  <p className="text-slate-600 dark:text-slate-300 mt-2 line-clamp-3">
                     {duplicateData.existingCandidate.contact_info.summary}
                   </p>
                 )}
               </div>
 
               {/* New Profile */}
-              <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
-                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
-                  Newly Uploaded Profile / Nuevo Perfil Cargado
+              <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-slate-50 dark:bg-slate-800/50">
+                <h4 className="text-xs font-semibold text-slate-900 dark:text-white uppercase tracking-wider mb-2">
+                  {t.newProfile}
                 </h4>
-                <div className="text-sm font-bold text-slate-900">
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
                   {duplicateData.newProfile.candidateName || duplicateData.newProfile.name || "Unknown"}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  Email: <span className="text-slate-600 font-medium">{duplicateData.newProfile.email || "N/A"}</span>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Email: <span className="text-slate-600 dark:text-slate-300 font-medium">{duplicateData.newProfile.email || "N/A"}</span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  Phone: <span className="text-slate-600 font-medium">{duplicateData.newProfile.phone || "N/A"}</span>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Phone: <span className="text-slate-600 dark:text-slate-300 font-medium">{duplicateData.newProfile.phone || "N/A"}</span>
                 </div>
                 {duplicateData.newProfile.summary && (
-                  <p className="text-slate-600 mt-2 line-clamp-3">
+                  <p className="text-slate-600 dark:text-slate-300 mt-2 line-clamp-3">
                     {duplicateData.newProfile.summary}
                   </p>
                 )}
@@ -1048,41 +1173,40 @@ export default function JobsPage() {
             </div>
 
             {/* AI Comparison Summary */}
-            <div className="border border-slate-200 rounded-md p-3 bg-blue-50">
-              <h4 className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-2">
-                AI Comparison Summary / Resumen de Comparación de IA
+            <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-blue-50 dark:bg-blue-950/20">
+              <h4 className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">
+                {t.aiComparison}
               </h4>
               {duplicateData.comparison ? (
-                <div className="text-xs text-slate-600 leading-relaxed flex flex-col gap-2">
-                  <p><strong>EN:</strong> {duplicateData.comparison.en}</p>
-                  <p><strong>ES:</strong> {duplicateData.comparison.es}</p>
-                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {duplicateData.comparison[lang] || duplicateData.comparison.en || duplicateData.comparison.es}
+                </p>
               ) : (
-                <p className="text-xs text-slate-500 italic">
-                  Comparing profiles with AI... / Comparando perfiles con IA...
+                <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                  {t.comparingWithAi}
                 </p>
               )}
             </div>
 
             {/* Actions */}
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 onClick={() => duplicateData.onResolve("cancel")}
-                className="px-3 py-1.5 border border-slate-200 rounded-md text-xs text-slate-600 bg-white hover:bg-slate-50 transition"
+                className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-md text-xs text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition"
               >
-                Cancel / Cancelar
+                {t.cancel}
               </button>
               <button
                 onClick={() => duplicateData.onResolve("ignore")}
                 className="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-md text-xs font-semibold transition"
               >
-                Keep Both / Conservar ambos
+                {t.keepBoth}
               </button>
               <button
                 onClick={() => duplicateData.onResolve("overwrite")}
                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold transition"
               >
-                Overwrite / Sobrescribir
+                {t.overwrite}
               </button>
             </div>
           </div>
