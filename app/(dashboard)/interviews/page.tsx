@@ -4,6 +4,13 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useApp } from "@/components/AppContext";
 
+interface Comment {
+  id: string;
+  text: string;
+  timestamp: string; // ISO string
+  author?: string;
+}
+
 interface Interview {
   id: string;
   candidate_id: string;
@@ -12,12 +19,19 @@ interface Interview {
   stage: string;
   feedback: string | null;
   created_at: string;
+  updated_at: string;
+  pinned: boolean;
   candidates: {
     name: string;
   } | null;
   jobs: {
     title: string;
   } | null;
+}
+
+interface Job {
+  id: string;
+  title: string;
 }
 
 const translations = {
@@ -31,10 +45,9 @@ const translations = {
     role: "Role",
     dateScheduled: "Date Scheduled",
     stage: "Stage",
-    interviewFeedback: "Interview Feedback",
-    feedbackPlaceholder: "Write detailed assessment feedback, questions, or observations...",
+    interviewFeedback: "Interview Feedback & Timeline",
+    feedbackPlaceholder: "Write assessment feedback, observations or notes...",
     saving: "Saving...",
-    updateInterview: "Update Interview",
     updateSuccess: "Interview updated successfully!",
     updateFailed: "Failed to update interview.",
     screening: "Screening",
@@ -42,7 +55,20 @@ const translations = {
     cultural: "Cultural",
     offer: "Offer",
     hired: "Hired",
-    rejected: "Rejected"
+    rejected: "Rejected",
+    
+    allPositions: "All Positions",
+    openPositions: "Open Positions",
+    addComment: "Add Comment",
+    commentPlaceholder: "Type a new comment/update...",
+    noCommentsYet: "No comments added yet.",
+    backToMain: "Back to All Interviews",
+    selectCandidateDetails: "Select a candidate to view details",
+    pinCandidate: "Pin Candidate",
+    unpinCandidate: "Unpin Candidate",
+    postedByAgent: "Agent",
+    noCandidatesInStage: "No candidates for this position.",
+    candidates: "Candidates"
   },
   es: {
     interviewsTitle: "Entrevistas",
@@ -54,10 +80,9 @@ const translations = {
     role: "Puesto",
     dateScheduled: "Fecha Programada",
     stage: "Etapa",
-    interviewFeedback: "Comentarios de la Entrevista",
-    feedbackPlaceholder: "Escriba comentarios detallados de la evaluación, preguntas u observaciones...",
+    interviewFeedback: "Comentarios y Cronología",
+    feedbackPlaceholder: "Escriba comentarios, observaciones o notas de la evaluación...",
     saving: "Guardando...",
-    updateInterview: "Actualizar Entrevista",
     updateSuccess: "¡Entrevista actualizada con éxito!",
     updateFailed: "Error al actualizar la entrevista.",
     screening: "Preselección",
@@ -65,110 +90,192 @@ const translations = {
     cultural: "Cultural",
     offer: "Oferta",
     hired: "Contratado",
-    rejected: "Rechazado"
+    rejected: "Rechazado",
+    
+    allPositions: "Todos los Puestos",
+    openPositions: "Puestos Abiertos",
+    addComment: "Agregar Comentario",
+    commentPlaceholder: "Escriba un nuevo comentario o actualización...",
+    noCommentsYet: "Aún no hay comentarios agregados.",
+    backToMain: "Volver a Todas las Entrevistas",
+    selectCandidateDetails: "Seleccione un candidato para ver los detalles",
+    pinCandidate: "Fijar Candidato",
+    unpinCandidate: "Desfijar Candidato",
+    postedByAgent: "Agente",
+    noCandidatesInStage: "No hay candidatos para este puesto.",
+    candidates: "Candidatos"
   }
 };
+
+const translateStage = (stage: string, lang: "en" | "es") => {
+  if (lang === "es") {
+    if (stage === "Screening") return "Preselección";
+    if (stage === "Technical") return "Técnica";
+    if (stage === "Cultural") return "Cultural";
+    if (stage === "Offer") return "Oferta";
+    if (stage === "Hired") return "Contratado";
+    if (stage === "Rejected") return "Rechazado";
+  }
+  return stage;
+};
+
+function parseFeedback(feedbackText: string | null): Comment[] {
+  if (!feedbackText) return [];
+  try {
+    const parsed = JSON.parse(feedbackText);
+    if (Array.isArray(parsed)) {
+      return parsed as Comment[];
+    }
+  } catch {
+    // Ignore and fall back to plain text format
+  }
+  return [{ id: "legacy-initial", text: feedbackText, timestamp: new Date().toISOString() }];
+}
 
 export default function InterviewsPage() {
   const { lang } = useApp();
   const t = translations[lang];
 
   const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [editStates, setEditStates] = useState<
-    Record<string, { stage: string; feedback: string }>
-  >({});
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedInterviewId, setSelectedInterviewId] = useState<string | null>(null);
+  
+  const [newComment, setNewComment] = useState("");
 
   useEffect(() => {
     let active = true;
 
-    async function fetchInterviews() {
+    async function loadData() {
       try {
-        const { data, error } = await supabase
-          .from("interviews")
-          .select("*, candidates(name), jobs(title)")
-          .order("interview_date", { ascending: false });
+        const [interviewsRes, jobsRes] = await Promise.all([
+          supabase
+            .from("interviews")
+            .select("*, candidates(name), jobs(title)"),
+          supabase
+            .from("jobs")
+            .select("id, title")
+            .order("title", { ascending: true })
+        ]);
 
-        if (error) throw error;
+        if (interviewsRes.error) throw interviewsRes.error;
+        if (jobsRes.error) throw jobsRes.error;
+
         if (active) {
-          const typedData = (data as unknown as Interview[]) || [];
-          setInterviews(typedData);
-
-          // Initialize edit states
-          const initialEditStates: Record<string, { stage: string; feedback: string }> = {};
-          typedData.forEach((item) => {
-            initialEditStates[item.id] = {
-              stage: item.stage,
-              feedback: item.feedback || "",
-            };
-          });
-          setEditStates(initialEditStates);
+          setInterviews((interviewsRes.data as unknown as Interview[]) || []);
+          setJobs((jobsRes.data as Job[]) || []);
           setLoading(false);
         }
       } catch (err) {
-        console.error("Error fetching interviews:", err);
+        console.error("Error loading data:", err);
         if (active) {
           setLoading(false);
         }
       }
     }
 
-    fetchInterviews();
+    loadData();
 
     return () => {
       active = false;
     };
   }, []);
 
-  const handleStateChange = (id: string, field: "stage" | "feedback", value: string) => {
-    setEditStates((prev) => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        [field]: value,
-      },
-    }));
-  };
-
-  const handleUpdate = async (id: string) => {
-    const editState = editStates[id];
-    if (!editState) return;
-
+  const updateInterviewField = async (id: string, updates: Partial<Interview>) => {
     try {
-      setUpdatingId(id);
-      setActionMessage(null);
-
+      const updated_at = new Date().toISOString();
       const { error } = await supabase
         .from("interviews")
         .update({
-          stage: editState.stage,
-          feedback: editState.feedback,
+          ...updates,
+          updated_at,
         })
         .eq("id", id);
 
       if (error) throw error;
 
-      setActionMessage(t.updateSuccess);
-      // Hide message after 3 seconds
-      setTimeout(() => setActionMessage(null), 3000);
-
-      // Refresh interview data locally
+      // Update state locally
       setInterviews((prev) =>
         prev.map((item) =>
           item.id === id
-            ? { ...item, stage: editState.stage, feedback: editState.feedback }
+            ? { ...item, ...updates, updated_at }
             : item
         )
       );
-    } catch (err: unknown) {
+    } catch (err) {
       console.error("Error updating interview:", err);
-      setActionMessage(t.updateFailed);
-    } finally {
-      setUpdatingId(null);
     }
   };
+
+  const handleSelectJob = (jobId: string | null) => {
+    setSelectedJobId(jobId);
+    if (jobId) {
+      const activeInt = interviews.find((i) => i.id === selectedInterviewId);
+      if (activeInt && activeInt.job_id !== jobId) {
+        setSelectedInterviewId(null);
+      }
+    }
+  };
+
+  const togglePin = async (id: string, currentPinned: boolean) => {
+    await updateInterviewField(id, { pinned: !currentPinned });
+  };
+
+  const handleAddComment = async () => {
+    if (!selectedInterviewId || !newComment.trim()) return;
+
+    const currentInterview = interviews.find((i) => i.id === selectedInterviewId);
+    if (!currentInterview) return;
+
+    const existingComments = parseFeedback(currentInterview.feedback);
+    const commentId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+    
+    const newCommentItem: Comment = {
+      id: commentId,
+      text: newComment.trim(),
+      timestamp: new Date().toISOString(),
+      author: lang === "es" ? "Agente" : "Agent"
+    };
+
+    const updatedComments = [...existingComments, newCommentItem];
+    await updateInterviewField(selectedInterviewId, { feedback: JSON.stringify(updatedComments) });
+    setNewComment("");
+  };
+
+  const getInterviewCountForJob = (jobId: string) => {
+    return interviews.filter((item) => item.job_id === jobId).length;
+  };
+
+  const getSortedInterviews = (items: Interview[]) => {
+    return [...items].sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+
+      if (a.pinned && b.pinned) {
+        const nameA = a.candidates?.name || "";
+        const nameB = b.candidates?.name || "";
+        return nameA.localeCompare(nameB);
+      }
+
+      const dateA = new Date(a.updated_at || a.created_at).getTime();
+      const dateB = new Date(b.updated_at || b.created_at).getTime();
+      return dateA - dateB;
+    });
+  };
+
+  const getFilteredInterviews = () => {
+    if (selectedJobId) {
+      return interviews.filter((item) => item.job_id === selectedJobId);
+    }
+    return interviews;
+  };
+
+  const filteredInterviews = getFilteredInterviews();
+  const sortedInterviews = getSortedInterviews(filteredInterviews);
+  const selectedInterview = interviews.find((item) => item.id === selectedInterviewId) || null;
+  const selectedInterviewComments = selectedInterview ? parseFeedback(selectedInterview.feedback) : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -179,10 +286,21 @@ export default function InterviewsPage() {
             {t.interviewsSubtitle}
           </p>
         </div>
-        {actionMessage && (
-          <div className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-xs font-semibold text-slate-600 dark:text-slate-300">
-            {actionMessage}
-          </div>
+
+        {/* Back to main button */}
+        {(selectedJobId !== null || selectedInterviewId !== null) && (
+          <button
+            onClick={() => {
+              setSelectedJobId(null);
+              setSelectedInterviewId(null);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-md transition duration-200 cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+            </svg>
+            {t.backToMain}
+          </button>
         )}
       </div>
 
@@ -197,86 +315,229 @@ export default function InterviewsPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6">
-          {interviews.map((interview) => {
-            const currentEdit = editStates[interview.id] || {
-              stage: interview.stage,
-              feedback: interview.feedback || "",
-            };
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+          {/* COLUMN 1: Open Positions Sidebar */}
+          <div className="lg:col-span-1 bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col gap-1.5">
+            <h3 className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 mb-1">
+              {t.openPositions}
+            </h3>
+            
+            <button
+              onClick={() => handleSelectJob(null)}
+              className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors duration-150 flex items-center justify-between cursor-pointer ${
+                selectedJobId === null
+                  ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                  : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              }`}
+            >
+              <span>{t.allPositions}</span>
+              <span className="text-xs px-2 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full font-medium">
+                {interviews.length}
+              </span>
+            </button>
 
-            return (
-              <div
-                key={interview.id}
-                className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col gap-4"
-              >
-                {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                      {interview.candidates?.name || t.unknownCandidate}
-                    </h2>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 font-medium">
-                      {t.role}: {interview.jobs?.title || t.unknownJob}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      {t.dateScheduled}:{" "}
-                      {new Date(interview.interview_date).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                      {t.stage}:
-                    </label>
-                    <select
-                      value={currentEdit.stage}
-                      onChange={(e) =>
-                        handleStateChange(interview.id, "stage", e.target.value)
-                      }
-                      className="px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-none"
-                    >
-                      <option value="Screening">{t.screening}</option>
-                      <option value="Technical">{t.technical}</option>
-                      <option value="Cultural">{t.cultural}</option>
-                      <option value="Offer">{t.offer}</option>
-                      <option value="Hired">{t.hired}</option>
-                      <option value="Rejected">{t.rejected}</option>
-                    </select>
-                  </div>
-                </div>
+            {jobs.map((job) => {
+              const count = getInterviewCountForJob(job.id);
+              return (
+                <button
+                  key={job.id}
+                  onClick={() => handleSelectJob(job.id)}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors duration-150 flex items-center justify-between cursor-pointer ${
+                    selectedJobId === job.id
+                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                      : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  }`}
+                >
+                  <span className="truncate mr-2" title={job.title}>{job.title}</span>
+                  <span className="text-xs px-2 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full font-medium flex-shrink-0">
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-                {/* Feedback Area */}
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    {t.interviewFeedback}
-                  </label>
-                  <textarea
-                    value={currentEdit.feedback}
-                    onChange={(e) =>
-                      handleStateChange(
-                        interview.id,
-                        "feedback",
-                        e.target.value
-                      )
-                    }
-                    placeholder={t.feedbackPlaceholder}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-800 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none"
-                  />
-                </div>
+          {/* COLUMN 2: Candidates List */}
+          <div className="lg:col-span-1 bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col gap-4">
+            <div className="border-b border-slate-200 dark:border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                {t.candidates}
+              </h3>
+            </div>
 
-                {/* Save Button */}
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => handleUpdate(interview.id)}
-                    disabled={updatingId === interview.id}
-                    className="py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-md transition duration-200 disabled:opacity-50"
+            {sortedInterviews.length === 0 ? (
+              <p className="text-slate-500 dark:text-slate-400 text-sm py-4 italic">
+                {t.noCandidatesInStage}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {sortedInterviews.map((interview) => (
+                  <div
+                    key={interview.id}
+                    onClick={() => setSelectedInterviewId(interview.id)}
+                    className={`cursor-pointer p-4 rounded-lg shadow-sm border transition duration-200 relative ${
+                      selectedInterviewId === interview.id
+                        ? "bg-slate-50 dark:bg-slate-800/40 border-blue-300 dark:border-blue-800"
+                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
+                    } ${
+                      interview.pinned
+                        ? "border-l-4 border-l-blue-600 pl-3"
+                        : "border-l border-l-slate-200 dark:border-l-slate-800 pl-4"
+                    }`}
                   >
-                    {updatingId === interview.id ? t.saving : t.updateInterview}
-                  </button>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                          {interview.candidates?.name || t.unknownCandidate}
+                        </h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                          {interview.jobs?.title || t.unknownJob}
+                        </p>
+                      </div>
+                      
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                          interview.stage === "Hired"
+                            ? "bg-green-100 dark:bg-green-950/40 text-green-800 dark:text-green-300"
+                            : interview.stage === "Rejected"
+                            ? "bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-300"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                        }`}>
+                          {translateStage(interview.stage, lang)}
+                        </span>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePin(interview.id, interview.pinned);
+                          }}
+                          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                          title={interview.pinned ? t.unpinCandidate : t.pinCandidate}
+                        >
+                          {interview.pinned ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400">
+                              <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.89A.5.5 0 0 0 6.36 14h11.27a.5.5 0 0 0 .25-.56l-1.78-.89a2 2 0 0 1-1.11-1.79V4a2 2 0 0 1 2-2h-10a2 2 0 0 1 2 2v6.76z" />
+                            </svg>
+                          ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.89A.5.5 0 0 0 6.36 14h11.27a.5.5 0 0 0 .25-.56l-1.78-.89a2 2 0 0 1-1.11-1.79V4a2 2 0 0 1 2-2h-10a2 2 0 0 1 2 2v6.76z" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* COLUMN 3: Candidate Details Pane */}
+          <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col gap-6 min-h-[300px]">
+            {!selectedInterview ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-12">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-10 h-10 text-slate-300 dark:text-slate-600 mb-3">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                </svg>
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">
+                  {t.selectCandidateDetails}
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-6">
+                {/* Details Header */}
+                <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col gap-1.5">
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                    {selectedInterview.candidates?.name || t.unknownCandidate}
+                  </h2>
+                  
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600 dark:text-slate-300 font-medium">
+                    <span>
+                      {t.role}: <span className="font-bold text-slate-800 dark:text-slate-200">{selectedInterview.jobs?.title || t.unknownJob}</span>
+                    </span>
+                    <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">|</span>
+                    <span>
+                      {t.dateScheduled}: <span className="text-slate-500 dark:text-slate-400">{new Date(selectedInterview.interview_date).toLocaleString()}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stage Dropdown Selector */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    {t.stage}:
+                  </label>
+                  <select
+                    value={selectedInterview.stage}
+                    onChange={(e) => updateInterviewField(selectedInterview.id, { stage: e.target.value })}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 transition-colors"
+                  >
+                    <option value="Screening">{t.screening}</option>
+                    <option value="Technical">{t.technical}</option>
+                    <option value="Cultural">{t.cultural}</option>
+                    <option value="Offer">{t.offer}</option>
+                    <option value="Hired">{t.hired}</option>
+                    <option value="Rejected">{t.rejected}</option>
+                  </select>
+                </div>
+
+                {/* Comments Thread System */}
+                <div className="flex flex-col gap-4 border-t border-slate-200 dark:border-slate-800 pt-4">
+                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    {t.interviewFeedback}
+                  </h3>
+
+                  {/* Comment List */}
+                  <div className="max-h-72 overflow-y-auto pr-1 flex flex-col gap-3">
+                    {selectedInterviewComments.length === 0 ? (
+                      <p className="text-slate-500 dark:text-slate-400 text-xs italic py-2">
+                        {t.noCommentsYet}
+                      </p>
+                    ) : (
+                      selectedInterviewComments.map((comment) => (
+                        <div
+                          key={comment.id}
+                          className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-100 dark:border-slate-800/60 flex flex-col gap-1.5"
+                        >
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                            <span className="font-semibold text-blue-600 dark:text-blue-400">
+                              {comment.author || t.postedByAgent}
+                            </span>
+                            <span>
+                              {new Date(comment.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                            {comment.text}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Add Comment Input */}
+                  <div className="flex flex-col gap-2 mt-2">
+                    <textarea
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      placeholder={t.commentPlaceholder}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white bg-white dark:bg-slate-800 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleAddComment}
+                        disabled={!newComment.trim()}
+                        className="py-1.5 px-3.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-md transition duration-200 cursor-pointer"
+                      >
+                        {t.addComment}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       )}
     </div>
