@@ -770,7 +770,7 @@ export default function JobsPage() {
                 </p>
               )}
               {uploadSuccess && (
-                <p className="text-xs text-green-600 dark:text-green-400 mt-3 font-semibold">
+                <p className="text-xs text-green-700 dark:text-green-200 mt-3 font-semibold">
                   {uploadSuccess}
                 </p>
               )}
@@ -793,7 +793,7 @@ export default function JobsPage() {
                             </span>
                           )}
                           {item.status === "success" && (
-                            <span className="text-green-600 dark:text-green-400 font-semibold flex items-center gap-1">
+                            <span className="text-green-700 dark:text-green-200 font-semibold flex items-center gap-1">
                               ✓ {t.success}
                             </span>
                           )}
@@ -891,7 +891,7 @@ export default function JobsPage() {
                           <span
                             className={`px-2.5 py-1 text-xs font-semibold rounded-md border ${
                               isPotentialMatch
-                                ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-900/50"
+                                ? "bg-green-50 dark:bg-green-800/20 text-green-700 dark:text-green-200 border-green-200 dark:border-green-800/30"
                                 : "bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
                             }`}
                           >
@@ -985,7 +985,7 @@ export default function JobsPage() {
 
                           {/* Promote to Interview Pipeline */}
                           {match.interview ? (
-                            <span className="px-3 py-1.5 bg-green-50 dark:bg-green-955/30 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400 text-xs font-semibold rounded-md">
+                            <span className="px-3 py-1.5 bg-green-50 dark:bg-green-800/20 border border-green-200 dark:border-green-800/30 text-green-700 dark:text-green-200 text-xs font-semibold rounded-md">
                               {t.promoted} ({match.interview.stage})
                             </span>
                           ) : (

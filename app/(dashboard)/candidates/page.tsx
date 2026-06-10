@@ -518,7 +518,7 @@ export default function CandidatesPage() {
                       </span>
                     )}
                     {item.status === "success" && (
-                      <span className="text-green-700 dark:text-green-400 font-semibold flex items-center gap-1">
+                      <span className="text-green-700 dark:text-green-200 font-semibold flex items-center gap-1">
                         ✓ {t.success}
                       </span>
                     )}
@@ -731,7 +731,7 @@ export default function CandidatesPage() {
                                 {vacancy.classification ? (
                                   <span className={`px-2 py-0.5 text-xs rounded-md font-semibold border ${
                                     vacancy.classification === "Qualified"
-                                      ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-900/50"
+                                      ? "bg-green-50 dark:bg-green-800/20 text-green-700 dark:text-green-200 border-green-200 dark:border-green-800/30"
                                       : vacancy.classification === "Review"
                                       ? "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
                                       : "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-900/50"
