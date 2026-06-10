@@ -75,6 +75,33 @@ interface UploadFileStatus {
   errorMessage?: string;
 }
 
+interface DuplicateState {
+  fileName: string;
+  existingCandidate: {
+    id: string;
+    name: string;
+    contact_info: {
+      email: string;
+      phone: string;
+      skills?: string[];
+      summary?: string;
+    };
+  };
+  newProfile: {
+    candidateName?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    skills?: string[];
+    summary?: string;
+  };
+  comparison: {
+    en: string;
+    es: string;
+  } | null;
+  onResolve: (action: "overwrite" | "ignore" | "cancel") => void;
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -86,6 +113,7 @@ export default function JobsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [uploadStatuses, setUploadStatuses] = useState<UploadFileStatus[]>([]);
+  const [duplicateData, setDuplicateData] = useState<DuplicateState | null>(null);
 
   // Evaluation states
   const [evaluatingIds, setEvaluatingIds] = useState<Record<string, boolean>>({});
@@ -222,54 +250,114 @@ export default function JobsPage() {
     setUploadError(null);
     setUploadSuccess(null);
 
-    const uploadPromises = fileList.map(async (file, index) => {
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      
       if (file.type !== "application/pdf") {
         setUploadStatuses((prev) =>
           prev.map((status, idx) =>
-            idx === index
+            idx === i
               ? { ...status, status: "error" as const, errorMessage: "Only PDF files are allowed" }
               : status
           )
         );
-        return;
+        continue;
       }
 
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("jobId", selectedJob.id);
+      let currentAction = "check";
+      let done = false;
 
-        const res = await fetch("/candidates/api/parse-cv", {
-          method: "POST",
-          body: formData,
-        });
+      while (!done) {
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("duplicateAction", currentAction);
+          formData.append("jobId", selectedJob.id);
 
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "Failed to process CV");
+          const res = await fetch("/candidates/api/parse-cv", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Failed to process CV");
+          }
+
+          const data = await res.json();
+
+          if (data.isDuplicate) {
+            // Trigger AI Comparison summary
+            let comparisonResult = null;
+            try {
+              const compRes = await fetch("/api/candidates/compare", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  existingProfile: data.existingCandidate,
+                  newProfile: data.newProfile,
+                }),
+              });
+              if (compRes.ok) {
+                const compData = await compRes.json();
+                comparisonResult = compData.comparison;
+              }
+            } catch (compErr) {
+              console.error("Comparison request failed:", compErr);
+            }
+
+            // Pause and wait for user's decision
+            const userAction = await new Promise<"overwrite" | "ignore" | "cancel">((resolve) => {
+              setDuplicateData({
+                fileName: file.name,
+                existingCandidate: data.existingCandidate,
+                newProfile: data.newProfile,
+                comparison: comparisonResult,
+                onResolve: resolve,
+              });
+            });
+
+            // Close dialog
+            setDuplicateData(null);
+
+            if (userAction === "cancel") {
+              setUploadStatuses((prev) =>
+                prev.map((status, idx) =>
+                  idx === i
+                    ? { ...status, status: "error" as const, errorMessage: "Upload cancelled by user" }
+                    : status
+                )
+              );
+              done = true;
+            } else {
+              // Resend request with overwrite or ignore parameter
+              currentAction = userAction === "overwrite" ? "overwrite" : "ignore";
+            }
+          } else {
+            // Success
+            setUploadStatuses((prev) =>
+              prev.map((status, idx) =>
+                idx === i
+                  ? { ...status, status: "success" as const }
+                  : status
+              )
+            );
+            done = true;
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Error uploading CV";
+          setUploadStatuses((prev) =>
+            prev.map((status, idx) =>
+              idx === i
+                ? { ...status, status: "error" as const, errorMessage: msg }
+                : status
+            )
+          );
+          done = true;
         }
-
-        await res.json();
-        setUploadStatuses((prev) =>
-          prev.map((status, idx) =>
-            idx === index
-              ? { ...status, status: "success" as const }
-              : status
-          )
-        );
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Error uploading CV";
-        setUploadStatuses((prev) =>
-          prev.map((status, idx) =>
-            idx === index
-              ? { ...status, status: "error" as const, errorMessage: msg }
-              : status
-          )
-        );
       }
-    });
+    }
 
-    await Promise.all(uploadPromises);
     setUploading(false);
 
     // Refresh matches for current job
@@ -901,6 +989,105 @@ export default function JobsPage() {
           </div>
         )}
       </div>
+
+      {/* Duplicate Detection dialog */}
+      {duplicateData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-md border border-slate-200 max-w-xl w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">
+                Duplicate Candidate Detected / Candidato Duplicado Detectado
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                The system detected an existing candidate with the same email or name. / El sistema detectó un candidato existente con el mismo correo o nombre. ({duplicateData.fileName})
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              {/* Existing Profile */}
+              <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
+                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
+                  Existing Profile / Perfil Existente
+                </h4>
+                <div className="text-sm font-bold text-slate-900">
+                  {duplicateData.existingCandidate.name}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Email: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.email}</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Phone: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.phone || "N/A"}</span>
+                </div>
+                {duplicateData.existingCandidate.contact_info.summary && (
+                  <p className="text-slate-600 mt-2 line-clamp-3">
+                    {duplicateData.existingCandidate.contact_info.summary}
+                  </p>
+                )}
+              </div>
+
+              {/* New Profile */}
+              <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
+                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
+                  Newly Uploaded Profile / Nuevo Perfil Cargado
+                </h4>
+                <div className="text-sm font-bold text-slate-900">
+                  {duplicateData.newProfile.candidateName || duplicateData.newProfile.name || "Unknown"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Email: <span className="text-slate-600 font-medium">{duplicateData.newProfile.email || "N/A"}</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Phone: <span className="text-slate-600 font-medium">{duplicateData.newProfile.phone || "N/A"}</span>
+                </div>
+                {duplicateData.newProfile.summary && (
+                  <p className="text-slate-600 mt-2 line-clamp-3">
+                    {duplicateData.newProfile.summary}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* AI Comparison Summary */}
+            <div className="border border-slate-200 rounded-md p-3 bg-blue-50">
+              <h4 className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-2">
+                AI Comparison Summary / Resumen de Comparación de IA
+              </h4>
+              {duplicateData.comparison ? (
+                <div className="text-xs text-slate-600 leading-relaxed flex flex-col gap-2">
+                  <p><strong>EN:</strong> {duplicateData.comparison.en}</p>
+                  <p><strong>ES:</strong> {duplicateData.comparison.es}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic">
+                  Comparing profiles with AI... / Comparando perfiles con IA...
+                </p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+              <button
+                onClick={() => duplicateData.onResolve("cancel")}
+                className="px-3 py-1.5 border border-slate-200 rounded-md text-xs text-slate-600 bg-white hover:bg-slate-50 transition"
+              >
+                Cancel / Cancelar
+              </button>
+              <button
+                onClick={() => duplicateData.onResolve("ignore")}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-md text-xs font-semibold transition"
+              >
+                Keep Both / Conservar ambos
+              </button>
+              <button
+                onClick={() => duplicateData.onResolve("overwrite")}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold transition"
+              >
+                Overwrite / Sobrescribir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

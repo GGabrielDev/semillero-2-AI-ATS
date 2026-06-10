@@ -1,16 +1,33 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 interface Score {
   id: string;
   candidate_id: string;
+  job_id?: string;
   ai_score: number;
   evaluation: {
-    summary: string;
+    summary: string | { en: string; es: string };
     classification: string;
-    suggestions: string;
+    suggestions: string | { en: string; es: string };
     riskLevel: string;
+  };
+  jobs?: {
+    title: string;
+  };
+  created_at: string;
+}
+
+interface Interview {
+  id: string;
+  candidate_id: string;
+  job_id: string;
+  stage: string;
+  interview_date: string;
+  feedback: string | null;
+  jobs?: {
+    title: string;
   };
   created_at: string;
 }
@@ -25,6 +42,7 @@ interface Candidate {
     summary?: string;
   };
   scores?: Score[];
+  interviews?: Interview[];
   created_at: string;
 }
 
@@ -34,15 +52,177 @@ interface UploadFileStatus {
   errorMessage?: string;
 }
 
+interface LinkedVacancy {
+  jobId: string;
+  jobTitle: string;
+  aiScore: number | null;
+  classification: string | null;
+  stage: string | null;
+}
+
+interface DuplicateState {
+  fileName: string;
+  existingCandidate: {
+    id: string;
+    name: string;
+    contact_info: {
+      email: string;
+      phone: string;
+      skills?: string[];
+      summary?: string;
+    };
+  };
+  newProfile: {
+    candidateName?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    skills?: string[];
+    summary?: string;
+  };
+  comparison: {
+    en: string;
+    es: string;
+  } | null;
+  onResolve: (action: "overwrite" | "ignore" | "cancel") => void;
+}
+
+const translations = {
+  en: {
+    candidatesTitle: "Candidates",
+    candidatesSubtitle: "A list of all candidates parsed and analyzed by the AI recruitment pipeline.",
+    searchPlaceholder: "Search candidates...",
+    searchBy: "Search by",
+    name: "Name",
+    email: "Email",
+    skills: "Skills",
+    deleteCandidate: "Delete Candidate",
+    deleteConfirmation: "Are you sure you want to delete this candidate? This action cannot be undone.",
+    noCandidateSelected: "Select a candidate to view details",
+    uploadCv: "Ingest Candidate CV (in a Vacuum)",
+    uploadCvDesc: "Upload a candidate CV PDF to parse contact info, skills, and summary. No job position will be associated initially, keeping the data isolated.",
+    uploadButton: "Upload CV Files",
+    uploadingButton: "Uploading CVs...",
+    uploadProgress: "Upload Progress",
+    success: "Success",
+    error: "Error",
+    phone: "Phone",
+    createdDate: "Added on",
+    professionalSummary: "Professional Summary (Extracted)",
+    skillsAndTech: "Skills & Technologies",
+    linkedVacancies: "Linked Vacancies",
+    jobTitle: "Job Title",
+    aiScore: "AI Suitability Score",
+    classification: "Classification",
+    stage: "Stage",
+    noLinkedVacancies: "No vacancies linked to this candidate yet.",
+    cancel: "Cancel",
+    confirmDelete: "Yes, Delete",
+    confirmTitle: "Confirm Deletion",
+    duplicateDetected: "Duplicate Candidate Detected",
+    duplicateMsg: "The system detected an existing candidate with the same email or name.",
+    existingProfile: "Existing Profile",
+    newProfile: "Newly Uploaded Profile",
+    aiComparison: "AI Comparison Summary",
+    overwrite: "Overwrite",
+    keepBoth: "Keep Both",
+    loading: "Loading candidates...",
+    noCandidatesFound: "No candidates found. Upload a CV above to get started.",
+  },
+  es: {
+    candidatesTitle: "Candidatos",
+    candidatesSubtitle: "Lista de todos los candidatos analizados por el pipeline de reclutamiento de IA.",
+    searchPlaceholder: "Buscar candidatos...",
+    searchBy: "Buscar por",
+    name: "Nombre",
+    email: "Correo",
+    skills: "Habilidades",
+    deleteCandidate: "Eliminar Candidato",
+    deleteConfirmation: "¿Está seguro de que desea eliminar a este candidato? Esta acción no se puede deshacer.",
+    noCandidateSelected: "Seleccione un candidato para ver los detalles",
+    uploadCv: "Ingresar CV de Candidato (Aislado)",
+    uploadCvDesc: "Cargue un archivo PDF de CV de candidato para extraer información de contacto, habilidades y resumen. No se asociará ninguna vacante inicialmente.",
+    uploadButton: "Cargar Archivos de CV",
+    uploadingButton: "Cargando CVs...",
+    uploadProgress: "Progreso de Carga",
+    success: "Éxito",
+    error: "Error",
+    phone: "Teléfono",
+    createdDate: "Añadido el",
+    professionalSummary: "Resumen Profesional (Extraído)",
+    skillsAndTech: "Habilidades y Tecnologías",
+    linkedVacancies: "Vacantes Vinculadas",
+    jobTitle: "Título del Puesto",
+    aiScore: "Puntaje de Idoneidad de IA",
+    classification: "Clasificación",
+    stage: "Etapa",
+    noLinkedVacancies: "Aún no hay vacantes vinculadas a este candidato.",
+    cancel: "Cancelar",
+    confirmDelete: "Sí, Eliminar",
+    confirmTitle: "Confirmar Eliminación",
+    duplicateDetected: "Candidato Duplicado Detectado",
+    duplicateMsg: "El sistema detectó un candidato existente con el mismo correo o nombre.",
+    existingProfile: "Perfil Existente",
+    newProfile: "Nuevo Perfil Cargado",
+    aiComparison: "Resumen de Comparación de IA",
+    overwrite: "Sobrescribir",
+    keepBoth: "Conservar ambos",
+    loading: "Cargando candidatos...",
+    noCandidatesFound: "No se encontraron candidatos. Cargue un CV arriba para comenzar.",
+  }
+};
+
+const getBilingualText = (field: unknown, lang: "en" | "es") => {
+  if (!field) return "";
+  if (typeof field === "object" && field !== null) {
+    const record = field as Record<string, string>;
+    return record[lang] || record.en || record.es || "";
+  }
+  return String(field);
+};
+
+const translateClassification = (cls: string, lang: "en" | "es") => {
+  if (lang === "es") {
+    if (cls === "Qualified") return "Calificado";
+    if (cls === "Review") return "En Revisión";
+    if (cls === "Unqualified") return "No Calificado";
+  }
+  return cls;
+};
+
+const translateStage = (stage: string, lang: "en" | "es") => {
+  if (lang === "es") {
+    if (stage === "Screening") return "Preselección";
+    if (stage === "Technical") return "Técnica";
+    if (stage === "Cultural") return "Cultural";
+    if (stage === "Offer") return "Oferta";
+  }
+  return stage;
+};
+
 export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Upload States
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [uploadStatuses, setUploadStatuses] = useState<UploadFileStatus[]>([]);
+  
+  // Search States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchField, setSearchField] = useState<"name" | "email" | "skills">("name");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchCandidates = () => {
+  // i18n Language Toggle State
+  const [lang, setLang] = useState<"en" | "es">("en");
+  const t = translations[lang];
+
+  // Delete & Duplicate States
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [duplicateData, setDuplicateData] = useState<DuplicateState | null>(null);
+
+  const fetchCandidates = useCallback((selectIdAfterFetch?: string) => {
     fetch("/api/candidates")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch candidates");
@@ -51,18 +231,28 @@ export default function CandidatesPage() {
       .then((data) => {
         setCandidates(data);
         setLoading(false);
+        if (selectIdAfterFetch) {
+          const matched = data.find((c: Candidate) => c.id === selectIdAfterFetch);
+          if (matched) setSelectedCandidate(matched);
+        } else if (data.length > 0 && !selectedCandidate) {
+          // Default selection if none is currently selected
+          setSelectedCandidate(data[0]);
+        } else if (selectedCandidate) {
+          // Keep current selection fresh
+          const refreshed = data.find((c: Candidate) => c.id === selectedCandidate.id);
+          setSelectedCandidate(refreshed || data[0] || null);
+        }
       })
       .catch((err) => {
         console.error(err);
         setLoading(false);
       });
-  };
+  }, [selectedCandidate]);
 
   useEffect(() => {
     fetchCandidates();
-  }, []);
+  }, [fetchCandidates]);
 
-  // Upload PDF CVs in a vacuum
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -76,83 +266,228 @@ export default function CandidatesPage() {
     }));
     setUploadStatuses(initialStatuses);
     setUploading(true);
-    setUploadError(null);
-    setUploadSuccess(null);
 
-    const uploadPromises = fileList.map(async (file, index) => {
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      
       if (file.type !== "application/pdf") {
         setUploadStatuses((prev) =>
           prev.map((status, idx) =>
-            idx === index
+            idx === i
               ? { ...status, status: "error" as const, errorMessage: "Only PDF files are allowed" }
               : status
           )
         );
-        return;
+        continue;
       }
 
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
+      let currentAction = "check";
+      let done = false;
 
-        const res = await fetch("/candidates/api/parse-cv", {
-          method: "POST",
-          body: formData,
-        });
+      while (!done) {
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("duplicateAction", currentAction);
 
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "Failed to process CV");
+          const res = await fetch("/candidates/api/parse-cv", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Failed to process CV");
+          }
+
+          const data = await res.json();
+
+          if (data.isDuplicate) {
+            // Trigger AI Comparison summary
+            let comparisonResult = null;
+            try {
+              const compRes = await fetch("/api/candidates/compare", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  existingProfile: data.existingCandidate,
+                  newProfile: data.newProfile,
+                }),
+              });
+              if (compRes.ok) {
+                const compData = await compRes.json();
+                comparisonResult = compData.comparison;
+              }
+            } catch (compErr) {
+              console.error("Comparison request failed:", compErr);
+            }
+
+            // Pause and wait for user's decision
+            const userAction = await new Promise<"overwrite" | "ignore" | "cancel">((resolve) => {
+              setDuplicateData({
+                fileName: file.name,
+                existingCandidate: data.existingCandidate,
+                newProfile: data.newProfile,
+                comparison: comparisonResult,
+                onResolve: resolve,
+              });
+            });
+
+            // Close dialog
+            setDuplicateData(null);
+
+            if (userAction === "cancel") {
+              setUploadStatuses((prev) =>
+                prev.map((status, idx) =>
+                  idx === i
+                    ? { ...status, status: "error" as const, errorMessage: "Upload cancelled by user" }
+                    : status
+                )
+              );
+              done = true;
+            } else {
+              // Resend request with overwrite or ignore parameter
+              currentAction = userAction === "overwrite" ? "overwrite" : "ignore";
+            }
+          } else {
+            // Success
+            setUploadStatuses((prev) =>
+              prev.map((status, idx) =>
+                idx === i
+                  ? { ...status, status: "success" as const }
+                  : status
+              )
+            );
+            done = true;
+            
+            // Refresh with new candidate selected if we received it
+            if (data.candidateId) {
+              fetchCandidates(data.candidateId);
+            }
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Error uploading CV";
+          setUploadStatuses((prev) =>
+            prev.map((status, idx) =>
+              idx === i
+                ? { ...status, status: "error" as const, errorMessage: msg }
+                : status
+            )
+          );
+          done = true;
         }
-
-        await res.json();
-        setUploadStatuses((prev) =>
-          prev.map((status, idx) =>
-            idx === index
-              ? { ...status, status: "success" as const }
-              : status
-          )
-        );
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Error uploading CV";
-        setUploadStatuses((prev) =>
-          prev.map((status, idx) =>
-            idx === index
-              ? { ...status, status: "error" as const, errorMessage: msg }
-              : status
-          )
-        );
       }
-    });
+    }
 
-    await Promise.all(uploadPromises);
     setUploading(false);
     fetchCandidates();
     e.target.value = "";
   };
 
+  const handleDeleteCandidate = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const res = await fetch(`/api/candidates?id=${selectedCandidate.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to delete candidate");
+      }
+      
+      setShowDeleteConfirm(false);
+      
+      // Remove from list and reset selected candidate
+      const updatedCandidates = candidates.filter((c) => c.id !== selectedCandidate.id);
+      setCandidates(updatedCandidates);
+      setSelectedCandidate(updatedCandidates[0] || null);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Error deleting candidate");
+    }
+  };
+
+  const handleSearchFieldChange = (field: "name" | "email" | "skills") => {
+    setSearchField(field);
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  };
+
+  // 1. Search filter
+  const filteredCandidates = candidates.filter((candidate) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    if (searchField === "email") {
+      return candidate.contact_info?.email?.toLowerCase().includes(q) ?? false;
+    }
+    if (searchField === "skills") {
+      return candidate.contact_info?.skills?.some(skill => skill.toLowerCase().includes(q)) ?? false;
+    }
+    // Default to Name
+    return candidate.name.toLowerCase().includes(q);
+  });
+
+  // 2. Alphabetical A-Z sort by candidate name
+  const sortedCandidates = [...filteredCandidates].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+
+  // Group linked vacancies (scores + interviews)
+  const getLinkedVacancies = (cand: Candidate): LinkedVacancy[] => {
+    const vacancyMap = new Map<string, LinkedVacancy>();
+
+    if (cand.scores && Array.isArray(cand.scores)) {
+      cand.scores.forEach((score) => {
+        const jobId = score.job_id;
+        if (!jobId) return;
+
+        vacancyMap.set(jobId, {
+          jobId,
+          jobTitle: score.jobs?.title || "Unknown Position",
+          aiScore: score.ai_score,
+          classification: score.evaluation?.classification || null,
+          stage: null,
+        });
+      });
+    }
+
+    if (cand.interviews && Array.isArray(cand.interviews)) {
+      cand.interviews.forEach((interview) => {
+        const jobId = interview.job_id;
+        if (!jobId) return;
+
+        const existing = vacancyMap.get(jobId);
+        if (existing) {
+          existing.stage = interview.stage || null;
+        } else {
+          vacancyMap.set(jobId, {
+            jobId,
+            jobTitle: interview.jobs?.title || "Unknown Position",
+            aiScore: null,
+            classification: null,
+            stage: interview.stage || null,
+          });
+        }
+      });
+    }
+
+    return Array.from(vacancyMap.values());
+  };
+
+  const linkedVacancies = selectedCandidate ? getLinkedVacancies(selectedCandidate) : [];
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Candidates</h1>
-          <p className="text-slate-600 text-sm">
-            A list of all candidates parsed and analyzed by the AI recruitment pipeline.
-          </p>
-        </div>
-      </div>
-
       {/* CV Uploader (Vacuum Ingestion) */}
       <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
         <h3 className="text-sm font-semibold text-slate-900 mb-1">
-          Ingest Candidate CV (in a Vacuum)
+          {t.uploadCv}
         </h3>
         <p className="text-xs text-slate-500 mb-4 max-w-md">
-          Upload a candidate CV PDF to parse contact info, skills, and summary. 
-          No job position will be associated initially, keeping the data isolated.
+          {t.uploadCvDesc}
         </p>
         <label className="relative cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-200">
-          {uploading ? "Uploading CVs..." : "Upload CV Files"}
+          {uploading ? t.uploadingButton : t.uploadButton}
           <input
             type="file"
             accept=".pdf"
@@ -162,20 +497,11 @@ export default function CandidatesPage() {
             className="hidden"
           />
         </label>
-        {uploadError && (
-          <p className="text-xs text-red-600 mt-3 font-semibold">
-            {uploadError}
-          </p>
-        )}
-        {uploadSuccess && (
-          <p className="text-xs text-green-600 mt-3 font-semibold">
-            {uploadSuccess}
-          </p>
-        )}
+        
         {uploadStatuses.length > 0 && (
           <div className="mt-4 w-full max-w-md border border-slate-200 rounded-md p-4 bg-slate-50 text-left">
             <h4 className="text-xs font-semibold text-slate-900 mb-2 uppercase tracking-wider">
-              Upload Progress
+              {t.uploadProgress}
             </h4>
             <ul className="divide-y divide-slate-200">
               {uploadStatuses.map((item, idx) => (
@@ -186,23 +512,23 @@ export default function CandidatesPage() {
                     </span>
                     {item.status === "uploading" && (
                       <span className="text-slate-600 font-semibold flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse"></span>
-                        Uploading...
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"></span>
+                        {lang === "es" ? "Cargando..." : "Uploading..."}
                       </span>
                     )}
                     {item.status === "success" && (
-                      <span className="text-green-600 font-semibold flex items-center gap-1">
-                        ✓ Success
+                      <span className="text-green-700 font-semibold flex items-center gap-1">
+                        ✓ {t.success}
                       </span>
                     )}
                     {item.status === "error" && (
-                      <span className="text-red-600 font-semibold flex items-center gap-1">
-                        ✗ Error
+                      <span className="text-red-700 font-semibold flex items-center gap-1">
+                        ✗ {t.error}
                       </span>
                     )}
                   </div>
                   {item.errorMessage && (
-                    <p className="text-red-600 font-normal mt-0.5">{item.errorMessage}</p>
+                    <p className="text-red-700 font-normal mt-0.5">{item.errorMessage}</p>
                   )}
                 </li>
               ))}
@@ -213,74 +539,370 @@ export default function CandidatesPage() {
 
       {loading ? (
         <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-          <p className="text-slate-500 text-sm">Loading candidates...</p>
+          <p className="text-slate-500 text-sm">{t.loading}</p>
         </div>
       ) : candidates.length === 0 ? (
         <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
           <p className="text-slate-500 text-sm">
-            No candidates found. Upload a CV above to get started.
+            {t.noCandidatesFound}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6">
-          {candidates.map((candidate) => {
-            return (
-              <div
-                key={candidate.id}
-                className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-4"
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* LEFT COLUMN: Sidebar (1/3 width) */}
+          <div className="md:col-span-1 bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h2 className="text-lg font-bold text-slate-900">
+                {t.candidatesTitle}
+              </h2>
+              <button
+                onClick={() => setLang(lang === "en" ? "es" : "en")}
+                className="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
               >
-                {/* Candidate Info Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">
-                      {candidate.name}
-                    </h2>
-                    <div className="text-xs text-slate-500 mt-1">
-                      Email:{" "}
-                      <span className="text-slate-600 font-medium mr-3">
-                        {candidate.contact_info.email}
-                      </span>
-                      Phone:{" "}
-                      <span className="text-slate-600 font-medium">
-                        {candidate.contact_info.phone}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                {lang === "en" ? "ESPAÑOL" : "ENGLISH"}
+              </button>
+            </div>
 
-                {/* Extracted Profile (Summary & Skills) */}
-                <div className="flex flex-col gap-2">
-                  {candidate.contact_info.summary && (
-                    <div>
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                        Professional Summary (Extracted)
-                      </span>
-                      <p className="text-slate-600 text-sm leading-relaxed">
-                        {candidate.contact_info.summary}
-                      </p>
-                    </div>
-                  )}
-                  {candidate.contact_info.skills && candidate.contact_info.skills.length > 0 && (
-                    <div className="mt-1">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-                        Skills & Technologies
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {candidate.contact_info.skills.map((skill) => (
-                          <span
-                            key={skill}
-                            className="px-2 py-0.5 bg-slate-50 text-slate-600 text-xs rounded border border-slate-200"
-                          >
-                            {skill}
-                          </span>
-                        ))}
+            {/* Search Input */}
+            <div className="flex flex-col gap-2">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t.searchPlaceholder}
+                className="w-full px-3 py-2 border border-slate-200 rounded-md text-slate-900 bg-white placeholder:text-slate-500 text-sm focus:outline-none"
+              />
+
+              {/* Search Quick Actions (only show when searchQuery !== "") */}
+              {searchQuery !== "" && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-xs text-slate-500 font-medium">
+                    {t.searchBy}:
+                  </span>
+                  <button
+                    onClick={() => handleSearchFieldChange("name")}
+                    className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
+                      searchField === "name"
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    {lang === "en" ? "Name" : "Nombre"}
+                  </button>
+                  <button
+                    onClick={() => handleSearchFieldChange("email")}
+                    className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
+                      searchField === "email"
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    {lang === "en" ? "Email" : "Correo"}
+                  </button>
+                  <button
+                    onClick={() => handleSearchFieldChange("skills")}
+                    className={`px-2 py-0.5 text-xs rounded transition font-medium border ${
+                      searchField === "skills"
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    {lang === "en" ? "Skills" : "Habilidades"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Alphabetical list of candidates */}
+            <div className="flex flex-col gap-1.5 max-h-[500px] overflow-y-auto pr-1">
+              {sortedCandidates.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  onClick={() => setSelectedCandidate(candidate)}
+                  className={`w-full text-left p-3 rounded-md border text-sm transition duration-200 ${
+                    selectedCandidate?.id === candidate.id
+                      ? "border-blue-600 bg-slate-50 font-semibold"
+                      : "border-slate-200 hover:border-slate-300 bg-white"
+                  }`}
+                >
+                  <div className="text-slate-900 font-medium truncate">
+                    {candidate.name}
+                  </div>
+                  <div className="text-xs text-slate-500 truncate mt-0.5">
+                    {candidate.contact_info.email}
+                  </div>
+                </button>
+              ))}
+              {sortedCandidates.length === 0 && (
+                <p className="text-xs text-slate-500 italic p-3 text-center">
+                  {lang === "es" ? "No se encontraron candidatos" : "No candidates found"}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN: Detail Pane (2/3 width) */}
+          <div className="md:col-span-2">
+            {selectedCandidate ? (
+              <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-6">
+                
+                {/* Header Profile Details */}
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-slate-200">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">
+                      {selectedCandidate.name}
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {t.createdDate}: {new Date(selectedCandidate.created_at).toLocaleDateString()}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
+                      <div>
+                        <span className="text-slate-500">{t.email}: </span>
+                        <span className="text-slate-600 font-medium">{selectedCandidate.contact_info.email}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">{t.phone}: </span>
+                        <span className="text-slate-600 font-medium">{selectedCandidate.contact_info.phone || "N/A"}</span>
                       </div>
                     </div>
+                  </div>
+
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-md transition"
+                  >
+                    {t.deleteCandidate}
+                  </button>
+                </div>
+
+                {/* Summary Extracted */}
+                {selectedCandidate.contact_info.summary && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                      {t.professionalSummary}
+                    </h3>
+                    <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-wrap">
+                      {selectedCandidate.contact_info.summary}
+                    </p>
+                  </div>
+                )}
+
+                {/* Skills tag group */}
+                {selectedCandidate.contact_info.skills && selectedCandidate.contact_info.skills.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                      {t.skillsAndTech}
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedCandidate.contact_info.skills.map((skill) => (
+                        <span
+                          key={skill}
+                          className="px-2 py-0.5 bg-slate-50 text-slate-600 text-xs rounded border border-slate-200 font-medium"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Linked Vacancies Section */}
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-3">
+                    {t.linkedVacancies}
+                  </h3>
+                  {linkedVacancies.length > 0 ? (
+                    <div className="border border-slate-200 rounded-md overflow-hidden bg-white">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 text-xs border-b border-slate-200 font-semibold">
+                            <th className="p-3 font-semibold">{t.jobTitle}</th>
+                            <th className="p-3 font-semibold">{t.aiScore}</th>
+                            <th className="p-3 font-semibold">{t.classification}</th>
+                            <th className="p-3 font-semibold">{t.stage}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 text-sm">
+                          {linkedVacancies.map((vacancy) => (
+                            <tr key={vacancy.jobId} className="text-slate-600">
+                              <td className="p-3 font-medium text-slate-900">
+                                {vacancy.jobTitle}
+                              </td>
+                              <td className="p-3 font-semibold text-blue-600">
+                                {vacancy.aiScore !== null ? `${vacancy.aiScore} / 100` : "-"}
+                              </td>
+                              <td className="p-3">
+                                {vacancy.classification ? (
+                                  <span className={`px-2 py-0.5 text-xs rounded-md font-semibold border ${
+                                    vacancy.classification === "Qualified"
+                                      ? "bg-green-50 text-green-700 border-green-200"
+                                      : vacancy.classification === "Review"
+                                      ? "bg-slate-50 text-slate-600 border-slate-200"
+                                      : "bg-red-50 text-red-700 border-red-200"
+                                  }`}>
+                                    {translateClassification(vacancy.classification, lang)}
+                                  </span>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                              <td className="p-3">
+                                {vacancy.stage ? (
+                                  <span className="px-2 py-0.5 text-xs rounded-md bg-blue-50 text-blue-700 border border-blue-200 font-semibold">
+                                    {translateStage(vacancy.stage, lang)}
+                                  </span>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">
+                      {t.noLinkedVacancies}
+                    </p>
                   )}
                 </div>
+
               </div>
-            );
-          })}
+            ) : (
+              <div className="bg-white p-12 rounded-lg shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
+                <p className="text-slate-600 font-semibold mb-2">
+                  {t.noCandidateSelected}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-md border border-slate-200 max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">
+              {t.confirmTitle}
+            </h3>
+            <p className="text-sm text-slate-600 mb-6">
+              {t.deleteConfirmation}
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 border border-slate-200 rounded-md text-sm text-slate-600 bg-white hover:bg-slate-50 transition"
+              >
+                {t.cancel}
+              </button>
+              <button
+                onClick={handleDeleteCandidate}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-semibold transition"
+              >
+                {t.confirmDelete}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Detection dialog */}
+      {duplicateData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-md border border-slate-200 max-w-xl w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">
+                {t.duplicateDetected}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                {t.duplicateMsg} ({duplicateData.fileName})
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Existing Profile */}
+              <div className="border border-slate-200 rounded-md p-3 bg-slate-50 text-xs">
+                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
+                  {t.existingProfile}
+                </h4>
+                <div className="text-sm font-bold text-slate-900">
+                  {duplicateData.existingCandidate.name}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Email: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.email}</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Phone: <span className="text-slate-600 font-medium">{duplicateData.existingCandidate.contact_info.phone || "N/A"}</span>
+                </div>
+                {duplicateData.existingCandidate.contact_info.summary && (
+                  <p className="text-slate-600 mt-2 line-clamp-3">
+                    {duplicateData.existingCandidate.contact_info.summary}
+                  </p>
+                )}
+              </div>
+
+              {/* New Profile */}
+              <div className="border border-slate-200 rounded-md p-3 bg-slate-50 text-xs">
+                <h4 className="text-xs font-semibold text-slate-900 uppercase tracking-wider mb-2">
+                  {t.newProfile}
+                </h4>
+                <div className="text-sm font-bold text-slate-900">
+                  {duplicateData.newProfile.candidateName || duplicateData.newProfile.name || "Unknown"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Email: <span className="text-slate-600 font-medium">{duplicateData.newProfile.email || "N/A"}</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Phone: <span className="text-slate-600 font-medium">{duplicateData.newProfile.phone || "N/A"}</span>
+                </div>
+                {duplicateData.newProfile.summary && (
+                  <p className="text-slate-600 mt-2 line-clamp-3">
+                    {duplicateData.newProfile.summary}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* AI Comparison Summary */}
+            <div className="border border-slate-200 rounded-md p-3 bg-blue-50">
+              <h4 className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-2">
+                {t.aiComparison}
+              </h4>
+              {duplicateData.comparison ? (
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {getBilingualText(duplicateData.comparison, lang)}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500 italic">
+                  {lang === "es" ? "Comparando perfiles con IA..." : "Comparing profiles with AI..."}
+                </p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+              <button
+                onClick={() => duplicateData.onResolve("cancel")}
+                className="px-3 py-1.5 border border-slate-200 rounded-md text-xs text-slate-600 bg-white hover:bg-slate-50 transition"
+              >
+                {lang === "es" ? "Cancelar" : "Cancel"}
+              </button>
+              <button
+                onClick={() => duplicateData.onResolve("ignore")}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-md text-xs font-semibold transition"
+              >
+                {lang === "es" ? "Conservar ambos" : "Keep Both"}
+              </button>
+              <button
+                onClick={() => duplicateData.onResolve("overwrite")}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold transition"
+              >
+                {lang === "es" ? "Sobrescribir" : "Overwrite"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

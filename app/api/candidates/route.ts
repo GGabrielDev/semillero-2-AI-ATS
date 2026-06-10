@@ -12,6 +12,10 @@ interface CandidateScore {
     riskLevel: string;
   };
   created_at: string;
+  job_id?: string;
+  jobs?: {
+    title: string;
+  };
 }
 
 interface InterviewDetail {
@@ -19,6 +23,10 @@ interface InterviewDetail {
   stage: string;
   interview_date: string;
   feedback: string | null;
+  created_at?: string;
+  jobs?: {
+    title: string;
+  };
 }
 
 interface RankedCandidate {
@@ -33,6 +41,20 @@ interface RankedCandidate {
   similarity?: number;
   scores?: CandidateScore[];
   interview?: InterviewDetail | null;
+}
+
+interface DBCandidate {
+  id: string;
+  name: string;
+  contact_info: {
+    email: string;
+    phone: string;
+    skills?: string[];
+    summary?: string;
+  };
+  created_at: string;
+  scores?: CandidateScore[];
+  interviews?: InterviewDetail[];
 }
 
 export async function GET(request: NextRequest) {
@@ -144,20 +166,33 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json(candidatesList);
     } else {
-      // Fetch all candidates sorted by created_at descending, along with scores ordered descending
+      // Fetch all candidates sorted by created_at descending, along with scores and interviews, including job titles
       const { data: candidates, error } = await supabase
         .from("candidates")
-        .select("*, scores(*)")
-        .order("created_at", { ascending: false })
-        .order("created_at", { referencedTable: "scores", ascending: false });
+        .select(`
+          *,
+          scores (
+            *,
+            jobs (
+              title
+            )
+          ),
+          interviews (
+            *,
+            jobs (
+              title
+            )
+          )
+        `)
+        .order("created_at", { ascending: false });
 
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
 
       // Safeguard: Sort and normalize scores inside each candidate in Javascript as well
-      const typedCandidates = candidates || [];
-      typedCandidates.forEach(cand => {
+      const typedCandidates = (candidates as unknown as DBCandidate[]) || [];
+      typedCandidates.forEach((cand: DBCandidate) => {
         if (cand.scores && Array.isArray(cand.scores)) {
           cand.scores.forEach((s: CandidateScore) => {
             if (s.ai_score <= 1.0) {
@@ -179,6 +214,13 @@ export async function GET(request: NextRequest) {
           });
           cand.scores.sort((a: CandidateScore, b: CandidateScore) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         }
+        if (cand.interviews && Array.isArray(cand.interviews)) {
+          cand.interviews.sort((a: InterviewDetail, b: InterviewDetail) => {
+            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return dateB - dateA;
+          });
+        }
       });
 
       return NextResponse.json(typedCandidates);
@@ -188,3 +230,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = createServerSupabaseClient();
+    const id = request.nextUrl.searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "Candidate ID is required" }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from("candidates")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, message: "Candidate deleted successfully" });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
