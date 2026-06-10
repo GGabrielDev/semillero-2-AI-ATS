@@ -151,13 +151,13 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 CREATE OR REPLACE FUNCTION notify_interview_stage_change()
 RETURNS TRIGGER AS $$
 DECLARE
-  payload_body TEXT;
+  payload_body JSONB;
 BEGIN
   IF (TG_OP = 'INSERT' OR OLD.stage IS DISTINCT FROM NEW.stage) THEN
     payload_body := jsonb_build_object(
       'old_record', CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE to_jsonb(OLD) END,
       'new_record', to_jsonb(NEW)
-    )::text;
+    );
 
     PERFORM net.http_post(
       url := 'https://n8n.gaboggamer.online/webhook/stage-changed',
