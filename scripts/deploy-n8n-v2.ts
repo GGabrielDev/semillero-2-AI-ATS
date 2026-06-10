@@ -345,8 +345,8 @@ async function main() {
             type: "string",
           },
           {
-            name: "interview_id",
-            value: "={{ $('Webhook Trigger').item.json.body.interviewId }}",
+            name: "job_id",
+            value: "={{ $('Webhook Trigger').item.json.body.jobId }}",
             type: "string",
           },
           {

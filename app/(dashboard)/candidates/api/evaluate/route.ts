@@ -57,47 +57,7 @@ export async function POST(request: NextRequest) {
 
     const jobRequirementsText = (job.requirements as { text?: string })?.text || "";
 
-    // 3. Fetch or create interview record
-    let interviewId = "";
-    const { data: existingInterviews, error: fetchInterviewError } = await supabase
-      .from("interviews")
-      .select("id")
-      .eq("candidate_id", candidateId)
-      .eq("job_id", jobId)
-      .limit(1);
-
-    if (fetchInterviewError) {
-      return NextResponse.json(
-        { error: fetchInterviewError.message },
-        { status: 500 }
-      );
-    }
-
-    if (existingInterviews && existingInterviews.length > 0) {
-      interviewId = existingInterviews[0].id;
-    } else {
-      // Create new interview
-      const { data: newInterview, error: insertInterviewError } = await supabase
-        .from("interviews")
-        .insert({
-          candidate_id: candidateId,
-          job_id: jobId,
-          interview_date: new Date().toISOString(),
-          stage: "Screening",
-        })
-        .select("id")
-        .single();
-
-      if (insertInterviewError || !newInterview) {
-        return NextResponse.json(
-          { error: insertInterviewError?.message || "Failed to create interview record" },
-          { status: 500 }
-        );
-      }
-      interviewId = newInterview.id;
-    }
-
-    // 4. Call n8n webhook
+    // 3. Call n8n webhook passing jobId instead of interviewId
     let n8nResponseData = null;
     const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
 
@@ -110,7 +70,7 @@ export async function POST(request: NextRequest) {
           },
           body: JSON.stringify({
             candidateId,
-            interviewId,
+            jobId,
             candidateName,
             candidateEmail: email,
             text: cvText,
@@ -141,7 +101,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       candidateId,
-      interviewId,
+      jobId,
       candidateName,
       n8nResponse: n8nResponseData,
     });

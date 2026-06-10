@@ -8,8 +8,6 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const jobId = formData.get("jobId") as string | null;
-
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
@@ -72,20 +70,8 @@ export async function POST(request: NextRequest) {
       candidateId = candidate.id;
       candidateName = candidate.name;
 
-      // Create an initial interview record if jobId is provided (but do not trigger n8n evaluate webhook yet)
-      if (jobId) {
-        const { error: interviewError } = await supabase
-          .from("interviews")
-          .insert({
-            candidate_id: candidate.id,
-            job_id: jobId,
-            interview_date: new Date().toISOString(),
-            stage: "Screening",
-          });
-        if (interviewError) {
-          console.error("Failed to insert interview:", interviewError.message);
-        }
-      }
+      // Decoupled: We no longer create an initial interview record on upload.
+      // Interviews are only queued when recruiter manually takes action.
     }
 
     return NextResponse.json({

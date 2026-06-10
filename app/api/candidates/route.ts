@@ -14,15 +14,25 @@ interface CandidateScore {
   created_at: string;
 }
 
+interface InterviewDetail {
+  id: string;
+  stage: string;
+  interview_date: string;
+  feedback: string | null;
+}
+
 interface RankedCandidate {
   id: string;
   name: string;
   contact_info: {
     email: string;
     phone: string;
+    skills?: string[];
+    summary?: string;
   };
   similarity?: number;
   scores?: CandidateScore[];
+  interview?: InterviewDetail | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -62,15 +72,28 @@ export async function GET(request: NextRequest) {
 
       const candidatesList = (rankedCandidates as unknown as RankedCandidate[]) || [];
 
-      // 3. Fetch scores for these matched candidates to return AI scores/details
+      // 3. Fetch scores and interviews for these matched candidates
       if (candidatesList.length > 0) {
         const candidateIds = candidatesList.map((c) => c.id);
         const { data: scores, error: scoresError } = await supabase
           .from("scores")
-          .select("*, interviews!inner(job_id)")
+          .select("*")
           .in("candidate_id", candidateIds)
-          .eq("interviews.job_id", jobId)
+          .eq("job_id", jobId)
           .order("created_at", { ascending: false });
+
+        const { data: interviews, error: interviewsError } = await supabase
+          .from("interviews")
+          .select("*")
+          .in("candidate_id", candidateIds)
+          .eq("job_id", jobId);
+
+        const interviewsMap = new Map<string, InterviewDetail>();
+        if (!interviewsError && interviews) {
+          interviews.forEach((i) => {
+            interviewsMap.set(i.candidate_id, i as unknown as InterviewDetail);
+          });
+        }
 
         if (!scoresError && scores) {
           const typedScores = (scores as unknown as CandidateScore[]) || [];
@@ -109,10 +132,12 @@ export async function GET(request: NextRequest) {
 
           candidatesList.forEach((c) => {
             c.scores = scoresMap.get(c.id) || [];
+            c.interview = interviewsMap.get(c.id) || null;
           });
         } else {
           candidatesList.forEach((c) => {
             c.scores = [];
+            c.interview = interviewsMap.get(c.id) || null;
           });
         }
       }
