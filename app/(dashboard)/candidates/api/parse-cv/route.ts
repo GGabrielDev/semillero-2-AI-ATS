@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
 import { PDFParse } from "pdf-parse";
+import { extractCandidateProfile } from "@/lib/gemini";
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,10 +12,6 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
-
-    if (!jobId) {
-      return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
@@ -33,17 +30,8 @@ export async function POST(request: NextRequest) {
     // Clean text
     const cleanText = text.replace(/\s+/g, " ").trim();
 
-    // Extract name from file (strip extension)
-    const name = file.name.replace(/\.[^/.]+$/, "");
-
-    // Extract email and phone using regex
-    const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
-    const emailMatch = text.match(emailRegex);
-    const email = emailMatch ? emailMatch[0] : "unknown@example.com";
-
-    const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
-    const phoneMatch = text.match(phoneRegex);
-    const phone = phoneMatch ? phoneMatch[0] : "Not provided";
+    // Extract professional profile using Gemini 1.5 Flash
+    const profile = await extractCandidateProfile(cleanText);
 
     // Generate candidate embedding
     const embedding = await generateEmbedding(cleanText);
@@ -51,19 +39,24 @@ export async function POST(request: NextRequest) {
     const isTest = formData.get("isTest") === "true";
 
     let candidateId = "00000000-0000-0000-0000-000000000000";
-    let interviewId = "00000000-0000-0000-0000-000000000000";
-    let candidateName = name;
+    let candidateName = profile.candidateName;
 
     if (!isTest) {
       // Initialize Supabase admin client
       const supabase = createServerSupabaseClient();
 
-      // Insert candidate
+      // Insert candidate with extracted details (including skills, summary, and cv_text)
       const { data: candidate, error: candidateError } = await supabase
         .from("candidates")
         .insert({
-          name,
-          contact_info: { email, phone },
+          name: profile.candidateName,
+          contact_info: {
+            email: profile.email,
+            phone: profile.phone,
+            skills: profile.skills || [],
+            summary: profile.summary || "",
+            cv_text: cleanText,
+          },
           embedding,
         })
         .select("*")
@@ -76,75 +69,30 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Insert an initial interview
-      const { data: interview, error: interviewError } = await supabase
-        .from("interviews")
-        .insert({
-          candidate_id: candidate.id,
-          job_id: jobId,
-          interview_date: new Date().toISOString(),
-          stage: "Screening",
-        })
-        .select("*")
-        .single();
-
-      if (interviewError || !interview) {
-        return NextResponse.json(
-          { error: interviewError?.message || "Failed to insert interview" },
-          { status: 500 }
-        );
-      }
-
       candidateId = candidate.id;
-      interviewId = interview.id;
       candidateName = candidate.name;
-    }
 
-    // Call n8n webhook
-    let n8nResponseData = null;
-    const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL;
-
-    if (webhookUrl) {
-      try {
-        const n8nResponse = await fetch(webhookUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            candidateId,
-            interviewId,
-            candidateName,
-            candidateEmail: email,
-            text: cleanText,
-            isTest,
-          }),
-        });
-
-        if (n8nResponse.ok) {
-          const contentType = n8nResponse.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            n8nResponseData = await n8nResponse.json();
-          } else {
-            n8nResponseData = { message: await n8nResponse.text() };
-          }
-        } else {
-          const errText = await n8nResponse.text();
-          n8nResponseData = { error: `n8n response not ok: ${n8nResponse.status} - ${errText}` };
+      // Create an initial interview record if jobId is provided (but do not trigger n8n evaluate webhook yet)
+      if (jobId) {
+        const { error: interviewError } = await supabase
+          .from("interviews")
+          .insert({
+            candidate_id: candidate.id,
+            job_id: jobId,
+            interview_date: new Date().toISOString(),
+            stage: "Screening",
+          });
+        if (interviewError) {
+          console.error("Failed to insert interview:", interviewError.message);
         }
-      } catch (err: unknown) {
-        n8nResponseData = { error: err instanceof Error ? err.message : "Failed to call n8n webhook" };
       }
-    } else {
-      n8nResponseData = { message: "NEXT_PUBLIC_N8N_WEBHOOK_URL is not set" };
     }
 
     return NextResponse.json({
       success: true,
       candidateId,
-      interviewId,
       candidateName,
-      n8nResponse: n8nResponseData,
+      profile,
     });
   } catch (error: unknown) {
     console.error("Error in parse-cv route:", error);

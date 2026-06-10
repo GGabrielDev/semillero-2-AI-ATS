@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
+import { extractJobProfile } from "@/lib/gemini";
 
 export async function GET() {
   try {
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Title and requirements are required" }, { status: 400 });
     }
 
+    const jobProfile = await extractJobProfile(requirements);
     const embedding = await generateEmbedding(requirements);
     const supabase = createServerSupabaseClient();
 
@@ -37,7 +39,11 @@ export async function POST(request: NextRequest) {
       .from("jobs")
       .insert({
         title,
-        requirements: { text: requirements },
+        requirements: { 
+          text: requirements,
+          skills: jobProfile.skills,
+          summary: jobProfile.summary
+        },
         embedding,
       })
       .select("*")

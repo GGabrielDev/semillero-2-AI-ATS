@@ -277,44 +277,45 @@ async function main() {
   // 3. Define workflow nodes dynamically
   console.log("\nBuilding workflow nodes...");
 
-  const webhookTriggerNode = {
+  // BRANCH A: Candidate Evaluation Webhook Branch
+  const evalWebhookNode = {
     parameters: {
       httpMethod: "POST",
       path: "evaluate-candidate",
       responseMode: "responseNode",
       options: {},
     },
-    id: "webhook-trigger",
+    id: "eval-webhook-trigger",
     name: "Webhook Trigger",
     type: "n8n-nodes-base.webhook",
     typeVersion: 1.1,
-    position: [100, 300],
+    position: [100, 200],
   };
 
-  const primaryChainNode = {
+  const evalChainNode = {
     parameters: {
-      promptType: "define",                 // Correct underlying value for manually defining prompt!
-      hasOutputParser: true,           // Enforce "Require Specific Output Format"
-      needsFallback: configureFallback,       // True underlying parameter to enable Fallback Model in v1.8+
-      enableFallbackModel: configureFallback, // True underlying key to enable fallback model (backward compatibility)
-      hasFallbackModel: configureFallback,    // Secondary key for fallback model (safeguard)
-      text: "={{ $('Webhook Trigger').item.json.body.text }}",
-      systemMessage: "You are an AI recruitment assistant evaluating a candidate's CV for a job vacancy. Analyze the candidate's CV text. You MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief candidate summary (max 3 sentences).\n- classification: 'Qualified', 'Unqualified', or 'Review'.\n- suggestions: an array of recommendations for next steps (e.g. ['Schedule interview', 'Reject', 'Verify references']).\n- riskLevel: 'Low', 'Medium', or 'High'.\n- ai_score: a number between 0 and 100 representing general suitability.\n\nDo not include markdown code blocks or any text outside the JSON.",
+      promptType: "define",
+      hasOutputParser: true,
+      needsFallback: configureFallback,
+      enableFallbackModel: configureFallback,
+      hasFallbackModel: configureFallback,
+      text: "=Candidate CV Text:\n{{ $('Webhook Trigger').item.json.body.text }}\n\nTarget Job Vacancy:\nTitle: {{ $('Webhook Trigger').item.json.body.jobTitle }}\nRequirements:\n{{ $('Webhook Trigger').item.json.body.jobRequirements }}",
+      systemMessage: "You are an AI recruitment evaluation expert. Your job is to carefully assess if the candidate qualifies for the specific job vacancy. Evaluate their CV text against the target Job Title and Job Requirements. Be objective: if the candidate does not have the core stack, experience, or skills required for this specific job, they MUST be classified as 'Unqualified' with a low suitability score.\n\nSuitability Score (ai_score) Calibration Rules:\n- If the candidate does not match the vacancy at all, or lacks all core technical skills required for the job, the score MUST be extremely low (between 0 and 15). Never give a middle score like 50 to a complete mismatch.\n- If the candidate has minor overlaps but lacks the core tech stack/experience, the score MUST be below 50.\n- If the candidate is a borderline or partial fit (50-74% match), the score must be between 50 and 74.\n- Only candidates who are highly qualified and match the core stack and experience should receive a score of 75 or higher.\n\nYou MUST respond with a raw JSON object containing exactly these five keys:\n- summary: a brief evaluation summary explaining why they match or fail to match the specific job requirements (max 3 sentences).\n- classification: 'Qualified' (if they match the requirements well), 'Unqualified' (if they lack critical skills/stack for this specific job), or 'Review' (if they are a borderline match).\n- suggestions: an array of recommendations (e.g. ['Schedule technical interview', 'Reject', 'Verify experience with X']).\n- riskLevel: 'Low', 'Medium', or 'High' (suitability/fit risk).\n- ai_score: an integer between 0 and 100 representing suitability for this specific job. Return a whole integer (do NOT return a decimal fraction like 0.88, return an integer like 88).",
     },
-    id: "llm-chain-primary",
+    id: "eval-llm-chain",
     name: "LLM Chain Evaluation (Primary)",
     type: "@n8n/n8n-nodes-langchain.chainLlm",
     typeVersion: 1.9,
-    position: [400, 300],
+    position: [400, 200],
   };
 
-  const primaryModelNode = {
+  const evalPrimaryModelNode = {
     parameters: primaryConfig.nodeParameters,
-    id: "primary-model",
+    id: "eval-primary-model",
     name: "Primary Chat Model",
     type: primaryConfig.nodeType,
     typeVersion: 1,
-    position: [300, 480],
+    position: [300, 380],
     credentials: {
       [primaryConfig.credentialType]: {
         id: primaryCredId,
@@ -323,19 +324,18 @@ async function main() {
     },
   };
 
-  const jsonParserNode = {
+  const evalJsonParserNode = {
     parameters: {
-      jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
+      jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"classification\": {\n      \"type\": \"string\",\n      \"enum\": [\"Qualified\", \"Unqualified\", \"Review\"]\n    },\n    \"suggestions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riskLevel\": {\n      \"type\": \"string\",\n      \"enum\": [\"Low\", \"Medium\", \"High\"]\n    },\n    \"ai_score\": {\n      \"type\": \"integer\",\n      \"minimum\": 0,\n      \"maximum\": 100,\n      \"description\": \"An integer score between 0 and 100 representing suitability. 100 means perfect fit, 0 means no fit.\"\n    }\n  },\n  \"required\": [\"summary\", \"classification\", \"suggestions\", \"riskLevel\", \"ai_score\"]\n}",
     },
-    id: "json-parser",
+    id: "eval-json-parser",
     name: "Structured Output Parser",
     type: "@n8n/n8n-nodes-langchain.outputParserStructured",
     typeVersion: 1,
-    position: [430, 480],
+    position: [430, 380],
   };
 
-  // Replace Code node with a native Edit Fields (Set) node to avoid code blocks
-  const setNode = {
+  const evalSetNode = {
     parameters: {
       assignments: {
         assignments: [
@@ -351,7 +351,7 @@ async function main() {
           },
           {
             name: "ai_score",
-            value: "={{ $json.ai_score }}",
+            value: "={{ $json.ai_score <= 1 ? Math.round($json.ai_score * 100) : ($json.ai_score <= 10 ? Math.round($json.ai_score * 10) : Math.round($json.ai_score)) }}",
             type: "number",
           },
           {
@@ -364,14 +364,14 @@ async function main() {
       include: "none",
       options: {},
     },
-    id: "format-data",
+    id: "eval-format-data",
     name: "Format Evaluation Data",
     type: "n8n-nodes-base.set",
     typeVersion: 3.4,
-    position: [700, 300],
+    position: [700, 200],
   };
 
-  const checkIfTestNode = {
+  const evalCheckIfTestNode = {
     parameters: {
       conditions: {
         options: {
@@ -394,25 +394,25 @@ async function main() {
         ]
       }
     },
-    id: "check-if-test",
+    id: "eval-check-if-test",
     name: "Check If Test",
     type: "n8n-nodes-base.if",
     typeVersion: 2.2,
-    position: [900, 300],
+    position: [900, 200],
   };
 
-  const supabaseInsertNode = {
+  const evalSupabaseInsertNode = {
     parameters: {
       operation: "create",
       tableId: "scores",
       dataToSend: "autoMapInputData",
       options: {},
     },
-    id: "supabase-insert",
+    id: "eval-supabase-insert",
     name: "Insert Score to Supabase",
     type: "n8n-nodes-base.supabase",
     typeVersion: 1,
-    position: [1100, 420],
+    position: [1100, 320],
     credentials: {
       supabaseApi: {
         id: supabaseCredId,
@@ -421,29 +421,185 @@ async function main() {
     },
   };
 
-  const respondWebhookNode = {
+  const evalRespondWebhookNode = {
     parameters: {
       options: {},
     },
-    id: "respond-webhook",
+    id: "eval-respond-webhook",
     name: "Respond to Webhook",
     type: "n8n-nodes-base.respondToWebhook",
     typeVersion: 1.1,
-    position: [1300, 300],
+    position: [1300, 200],
   };
 
+
+  // BRANCH B: Candidate Profiling Webhook Branch (isolated vacuum extraction)
+  const profileCandidateWebhookNode = {
+    parameters: {
+      httpMethod: "POST",
+      path: "extract-candidate-profile",
+      responseMode: "responseNode",
+      options: {},
+    },
+    id: "cand-webhook-trigger",
+    name: "Webhook Trigger - Candidate",
+    type: "n8n-nodes-base.webhook",
+    typeVersion: 1.1,
+    position: [100, 600],
+  };
+
+  const profileCandidateChainNode = {
+    parameters: {
+      promptType: "define",
+      hasOutputParser: true,
+      needsFallback: configureFallback,
+      enableFallbackModel: configureFallback,
+      hasFallbackModel: configureFallback,
+      text: "={{ $('Webhook Trigger - Candidate').item.json.body.text }}",
+      systemMessage: "You are an AI recruitment assistant. Analyze the candidate's CV text. Extract the candidate's actual name, email, phone, a list of professional skills/technologies (buzzwords in lowercase), and a brief summary. You MUST respond with a raw JSON object containing exactly these five keys:\n- candidateName: actual name of candidate\n- email: contact email\n- phone: contact phone\n- skills: array of lowercase skill strings\n- summary: brief summary\n\nDo not include markdown code blocks or any text outside the JSON.",
+    },
+    id: "cand-llm-chain",
+    name: "LLM Chain Profiling (Candidate)",
+    type: "@n8n/n8n-nodes-langchain.chainLlm",
+    typeVersion: 1.9,
+    position: [400, 600],
+  };
+
+  const profileCandidatePrimaryModelNode = {
+    parameters: primaryConfig.nodeParameters,
+    id: "cand-primary-model",
+    name: "Primary Chat Model - Candidate",
+    type: primaryConfig.nodeType,
+    typeVersion: 1,
+    position: [300, 780],
+    credentials: {
+      [primaryConfig.credentialType]: {
+        id: primaryCredId,
+        name: `Semillero2_Primary_${primaryConfig.credentialType}`,
+      },
+    },
+  };
+
+  const profileCandidateJsonParserNode = {
+    parameters: {
+      jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"candidateName\": { \"type\": \"string\" },\n    \"email\": { \"type\": \"string\" },\n    \"phone\": { \"type\": \"string\" },\n    \"skills\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" }\n    },\n    \"summary\": { \"type\": \"string\" }\n  },\n  \"required\": [\"candidateName\", \"email\", \"phone\", \"skills\", \"summary\"]\n}",
+    },
+    id: "cand-json-parser",
+    name: "Structured Output Parser - Candidate",
+    type: "@n8n/n8n-nodes-langchain.outputParserStructured",
+    typeVersion: 1,
+    position: [430, 780],
+  };
+
+  const profileCandidateRespondWebhookNode = {
+    parameters: {
+      options: {},
+    },
+    id: "cand-respond-webhook",
+    name: "Respond to Webhook - Candidate",
+    type: "n8n-nodes-base.respondToWebhook",
+    typeVersion: 1.1,
+    position: [700, 600],
+  };
+
+
+  // BRANCH C: Job Description Profiling Webhook Branch (isolated vacuum extraction)
+  const profileJobWebhookNode = {
+    parameters: {
+      httpMethod: "POST",
+      path: "extract-job-profile",
+      responseMode: "responseNode",
+      options: {},
+    },
+    id: "job-webhook-trigger",
+    name: "Webhook Trigger - Job",
+    type: "n8n-nodes-base.webhook",
+    typeVersion: 1.1,
+    position: [100, 1000],
+  };
+
+  const profileJobChainNode = {
+    parameters: {
+      promptType: "define",
+      hasOutputParser: true,
+      needsFallback: configureFallback,
+      enableFallbackModel: configureFallback,
+      hasFallbackModel: configureFallback,
+      text: "={{ $('Webhook Trigger - Job').item.json.body.requirements }}",
+      systemMessage: "You are an AI recruitment assistant. Analyze the job description/requirements. Extract the key skills/technologies/abilities required (as lowercase buzzwords) and a brief summary of the vacancy. You MUST respond with a raw JSON object containing exactly these two keys:\n- skills: array of lowercase skill strings\n- summary: brief summary\n\nDo not include markdown code blocks or any text outside the JSON.",
+    },
+    id: "job-llm-chain",
+    name: "LLM Chain Profiling (Job)",
+    type: "@n8n/n8n-nodes-langchain.chainLlm",
+    typeVersion: 1.9,
+    position: [400, 1000],
+  };
+
+  const profileJobPrimaryModelNode = {
+    parameters: primaryConfig.nodeParameters,
+    id: "job-primary-model",
+    name: "Primary Chat Model - Job",
+    type: primaryConfig.nodeType,
+    typeVersion: 1,
+    position: [300, 1180],
+    credentials: {
+      [primaryConfig.credentialType]: {
+        id: primaryCredId,
+        name: `Semillero2_Primary_${primaryConfig.credentialType}`,
+      },
+    },
+  };
+
+  const profileJobJsonParserNode = {
+    parameters: {
+      jsonSchema: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"skills\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" }\n    },\n    \"summary\": { \"type\": \"string\" }\n  },\n  \"required\": [\"skills\", \"summary\"]\n}",
+    },
+    id: "job-json-parser",
+    name: "Structured Output Parser - Job",
+    type: "@n8n/n8n-nodes-langchain.outputParserStructured",
+    typeVersion: 1,
+    position: [430, 1180],
+  };
+
+  const profileJobRespondWebhookNode = {
+    parameters: {
+      options: {},
+    },
+    id: "job-respond-webhook",
+    name: "Respond to Webhook - Job",
+    type: "n8n-nodes-base.respondToWebhook",
+    typeVersion: 1.1,
+    position: [700, 1000],
+  };
+
+
+  // Base nodes array
   const wNodes: any[] = [
-    webhookTriggerNode,
-    primaryChainNode,
-    primaryModelNode,
-    jsonParserNode,
-    setNode,
-    checkIfTestNode,
-    supabaseInsertNode,
-    respondWebhookNode,
+    evalWebhookNode,
+    evalChainNode,
+    evalPrimaryModelNode,
+    evalJsonParserNode,
+    evalSetNode,
+    evalCheckIfTestNode,
+    evalSupabaseInsertNode,
+    evalRespondWebhookNode,
+
+    profileCandidateWebhookNode,
+    profileCandidateChainNode,
+    profileCandidatePrimaryModelNode,
+    profileCandidateJsonParserNode,
+    profileCandidateRespondWebhookNode,
+
+    profileJobWebhookNode,
+    profileJobChainNode,
+    profileJobPrimaryModelNode,
+    profileJobJsonParserNode,
+    profileJobRespondWebhookNode
   ];
 
+  // Base connections map
   const wConnections: any = {
+    // BRANCH A
     "Webhook Trigger": {
       main: [
         [
@@ -471,7 +627,7 @@ async function main() {
         [
           {
             node: "LLM Chain Evaluation (Primary)",
-            type: "ai_outputParser", // Correct destination port type!
+            type: "ai_outputParser",
             index: 0,
           },
         ],
@@ -528,18 +684,111 @@ async function main() {
         ],
       ],
     },
+
+    // BRANCH B
+    "Webhook Trigger - Candidate": {
+      main: [
+        [
+          {
+            node: "LLM Chain Profiling (Candidate)",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Primary Chat Model - Candidate": {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Profiling (Candidate)",
+            type: "ai_languageModel",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Structured Output Parser - Candidate": {
+      outputParser: [
+        [
+          {
+            node: "LLM Chain Profiling (Candidate)",
+            type: "ai_outputParser",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "LLM Chain Profiling (Candidate)": {
+      main: [
+        [
+          {
+            node: "Respond to Webhook - Candidate",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+
+    // BRANCH C
+    "Webhook Trigger - Job": {
+      main: [
+        [
+          {
+            node: "LLM Chain Profiling (Job)",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Primary Chat Model - Job": {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Profiling (Job)",
+            type: "ai_languageModel",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "Structured Output Parser - Job": {
+      outputParser: [
+        [
+          {
+            node: "LLM Chain Profiling (Job)",
+            type: "ai_outputParser",
+            index: 0,
+          },
+        ],
+      ],
+    },
+    "LLM Chain Profiling (Job)": {
+      main: [
+        [
+          {
+            node: "Respond to Webhook - Job",
+            type: "main",
+            index: 0,
+          },
+        ],
+      ],
+    }
   };
 
+  // Connect Fallback Models if configured
   if (configureFallback && fallbackConfig) {
-    console.log("Adding Fallback Chat Model...");
+    console.log("Adding Fallback Chat Models...");
 
-    const fallbackModelNode = {
+    const evalFallbackModelNode = {
       parameters: fallbackConfig.nodeParameters,
-      id: "fallback-model",
+      id: "eval-fallback-model",
       name: "Fallback Chat Model",
       type: fallbackConfig.nodeType,
       typeVersion: 1,
-      position: [560, 480],
+      position: [560, 380],
       credentials: {
         [fallbackConfig.credentialType]: {
           id: fallbackCredId,
@@ -548,14 +797,68 @@ async function main() {
       },
     };
 
-    wNodes.push(fallbackModelNode);
+    const candFallbackModelNode = {
+      parameters: fallbackConfig.nodeParameters,
+      id: "cand-fallback-model",
+      name: "Fallback Chat Model - Candidate",
+      type: fallbackConfig.nodeType,
+      typeVersion: 1,
+      position: [560, 780],
+      credentials: {
+        [fallbackConfig.credentialType]: {
+          id: fallbackCredId,
+          name: `Semillero2_Fallback_${fallbackConfig.credentialType}`,
+        },
+      },
+    };
 
-    // Connect fallback model directly: source port is ai_languageModel, target port is ai_languageModel (index 1)!
+    const jobFallbackModelNode = {
+      parameters: fallbackConfig.nodeParameters,
+      id: "job-fallback-model",
+      name: "Fallback Chat Model - Job",
+      type: fallbackConfig.nodeType,
+      typeVersion: 1,
+      position: [560, 1180],
+      credentials: {
+        [fallbackConfig.credentialType]: {
+          id: fallbackCredId,
+          name: `Semillero2_Fallback_${fallbackConfig.credentialType}`,
+        },
+      },
+    };
+
+    wNodes.push(evalFallbackModelNode, candFallbackModelNode, jobFallbackModelNode);
+
+    // Setup fallback connections
     wConnections["Fallback Chat Model"] = {
       ai_languageModel: [
         [
           {
             node: "LLM Chain Evaluation (Primary)",
+            type: "ai_languageModel",
+            index: 1,
+          },
+        ],
+      ],
+    };
+
+    wConnections["Fallback Chat Model - Candidate"] = {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Profiling (Candidate)",
+            type: "ai_languageModel",
+            index: 1,
+          },
+        ],
+      ],
+    };
+
+    wConnections["Fallback Chat Model - Job"] = {
+      ai_languageModel: [
+        [
+          {
+            node: "LLM Chain Profiling (Job)",
             type: "ai_languageModel",
             index: 1,
           },

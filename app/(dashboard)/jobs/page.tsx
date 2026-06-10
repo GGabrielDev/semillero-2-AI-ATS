@@ -5,7 +5,11 @@ import React, { useState, useEffect } from "react";
 interface Job {
   id: string;
   title: string;
-  requirements: { text: string };
+  requirements: {
+    text: string;
+    skills?: string[];
+    summary?: string;
+  };
   created_at: string;
 }
 
@@ -27,6 +31,8 @@ interface Candidate {
   contact_info: {
     email: string;
     phone: string;
+    skills?: string[];
+    summary?: string;
   };
   similarity?: number;
   scores?: Score[];
@@ -43,6 +49,9 @@ export default function JobsPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // Evaluation states
+  const [evaluatingIds, setEvaluatingIds] = useState<Record<string, boolean>>({});
 
   // Form states
   const [newTitle, setNewTitle] = useState("");
@@ -177,7 +186,8 @@ export default function JobsPage() {
         throw new Error(errData.error || "Failed to process CV");
       }
 
-      setUploadSuccess(`CV for ${file.name} successfully parsed and indexed!`);
+      const resData = await res.json();
+      setUploadSuccess(`CV for ${resData.candidateName || file.name} successfully parsed and linked!`);
 
       // Refresh matches for current job
       const matchesRes = await fetch(`/api/candidates?jobId=${selectedJob.id}`);
@@ -191,6 +201,34 @@ export default function JobsPage() {
       setUploading(false);
       // Clear file input
       e.target.value = "";
+    }
+  };
+
+  // Run deep AI evaluation via backend endpoint
+  const handleEvaluate = async (candidateId: string) => {
+    if (!selectedJob) return;
+    try {
+      setEvaluatingIds((prev) => ({ ...prev, [candidateId]: true }));
+      const res = await fetch("/candidates/api/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidateId, jobId: selectedJob.id }),
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to trigger evaluation");
+      }
+      
+      // Refresh matches for current job
+      const matchesRes = await fetch(`/api/candidates?jobId=${selectedJob.id}`);
+      if (matchesRes.ok) {
+        const matchesData = await matchesRes.json();
+        setMatches(matchesData);
+      }
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Error evaluating candidate");
+    } finally {
+      setEvaluatingIds((prev) => ({ ...prev, [candidateId]: false }));
     }
   };
 
@@ -292,23 +330,42 @@ export default function JobsPage() {
               </p>
             </div>
 
-            {/* Requirements */}
-            <div className="p-4 bg-slate-50 rounded-md border border-slate-200">
-              <h3 className="text-sm font-semibold text-slate-900 mb-2">
-                Requirements
-              </h3>
-              <p className="text-slate-600 text-sm whitespace-pre-wrap">
-                {selectedJob.requirements.text}
-              </p>
+            {/* Requirements & Extracted Job Skills */}
+            <div className="p-4 bg-slate-50 rounded-md border border-slate-200 flex flex-col gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 mb-1">
+                  Description
+                </h3>
+                <p className="text-slate-600 text-sm whitespace-pre-wrap leading-relaxed">
+                  {selectedJob.requirements.text}
+                </p>
+              </div>
+              {selectedJob.requirements.skills && selectedJob.requirements.skills.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                    Extracted Job Keywords / Required Skills
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedJob.requirements.skills.map((skill) => (
+                      <span
+                        key={skill}
+                        className="px-2 py-0.5 bg-white border border-slate-200 text-slate-700 text-xs rounded-md font-medium"
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* PDF Uploader */}
             <div className="border border-dashed border-slate-200 rounded-lg p-6 flex flex-col items-center justify-center text-center">
               <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                Upload Candidate CV (PDF)
+                Upload Candidate CV for this Vacancy (PDF)
               </h3>
               <p className="text-xs text-slate-500 mb-4 max-w-md">
-                Uploading a candidate CV parses the text, calculates its semantic matching score, schedules a screening interview, and signals n8n workflow.
+                Uploading a candidate CV parses the text and extracts their skills/profile in a vacuum. It associates them with this job, enabling you to check skills overlap before running the deep AI score model.
               </p>
               <label className="relative cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-200">
                 {uploading ? "Processing CV..." : "Choose CV File"}
@@ -335,7 +392,7 @@ export default function JobsPage() {
             {/* Matches List */}
             <div>
               <h3 className="text-base font-bold text-slate-900 mb-3">
-                Matched Candidates (Semantic Similarity)
+                Candidates & Compatibility Index
               </h3>
               {loadingMatches ? (
                 <p className="text-slate-500 text-sm">Finding matches...</p>
@@ -344,45 +401,157 @@ export default function JobsPage() {
                   No candidates have been uploaded or matched yet.
                 </p>
               ) : (
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4">
                   {matches.map((match) => {
                     const similarityPct = match.similarity
                       ? Math.round(match.similarity * 100)
                       : null;
                     const latestScore = match.scores?.[0];
 
+                    // Programmatic skills matching logic
+                    const jobSkills = selectedJob.requirements.skills || [];
+                    const candidateSkills = match.contact_info.skills || [];
+
+                    const skillsMatch = (candSkill: string, jobSkill: string): boolean => {
+                      const c = candSkill.toLowerCase().trim();
+                      const j = jobSkill.toLowerCase().trim();
+                      if (c === j) return true;
+                      if (c.includes(j) || j.includes(c)) return true;
+                      
+                      const cWords = c.split(/[\s,./()&+-]+/).filter(w => w.length > 2);
+                      const jWords = j.split(/[\s,./()&+-]+/).filter(w => w.length > 2);
+                      
+                      const stopWords = ['and', 'for', 'with', 'the', 'management', 'administration', 'development', 'developer', 'engineer', 'system', 'systems', 'integration', 'operations', 'knowledge', 'experience', 'expert', 'proficiency', 'proficient'];
+                      
+                      const sharedWords = cWords.filter(w => jWords.includes(w) && !stopWords.includes(w));
+                      return sharedWords.length > 0;
+                    };
+                    
+                    const matchedSkills = jobSkills.filter(js => 
+                      candidateSkills.some(cs => skillsMatch(cs, js))
+                    );
+                    const missingSkills = jobSkills.filter(js => 
+                      !candidateSkills.some(cs => skillsMatch(cs, js))
+                    );
+                    
+                    const overlapCount = matchedSkills.length;
+                    const totalRequired = jobSkills.length;
+                    const matchPct = totalRequired > 0 ? Math.round((overlapCount / totalRequired) * 100) : 0;
+                    const isPotentialMatch = matchPct >= 75;
+
                     return (
                       <div
                         key={match.id}
-                        className="p-4 rounded-md border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                        className="p-5 rounded-lg border border-slate-200 bg-white flex flex-col gap-4 shadow-sm hover:border-slate-300 transition duration-200"
                       >
-                        <div className="flex flex-col gap-1">
-                          <div className="text-slate-900 font-bold text-sm">
-                            {match.name}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            Email: {match.contact_info.email} | Phone:{" "}
-                            {match.contact_info.phone}
-                          </div>
-                          {latestScore && (
-                            <div className="text-xs text-slate-600 mt-1">
-                              <span className="font-semibold">AI Decision:</span>{" "}
-                              {latestScore.evaluation.classification} (Score:{" "}
-                              {latestScore.ai_score}/10)
+                        {/* Upper info panel */}
+                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                          <div className="flex flex-col gap-1">
+                            <div className="text-slate-900 font-bold text-base">
+                              {match.name}
                             </div>
-                          )}
+                            <div className="text-xs text-slate-500">
+                              Email: <span className="text-slate-700 font-medium mr-3">{match.contact_info.email}</span>
+                              Phone: <span className="text-slate-700 font-medium">{match.contact_info.phone}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {/* Pre-selection status badge */}
+                            <span
+                              className={`px-2.5 py-1 text-xs font-semibold rounded-md border ${
+                                isPotentialMatch
+                                  ? "bg-green-50 text-green-700 border-green-200"
+                                  : "bg-slate-50 text-slate-500 border-slate-200"
+                              }`}
+                            >
+                              {isPotentialMatch
+                                ? `Potential Match (${matchPct}% overlap)`
+                                : `Skill Mismatch (${matchPct}% overlap)`}
+                            </span>
+                            
+                            {/* Semantic embedding similarity badge */}
+                            {similarityPct !== null && (
+                              <span className="px-2.5 py-1 text-xs font-semibold rounded-md border bg-blue-50 text-blue-700 border-blue-200">
+                                Semantic: {similarityPct}%
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                          {similarityPct !== null && (
-                            <div className="text-right">
-                              <span className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                                Match Score
+
+                        {/* Skills overlap details */}
+                        <div className="bg-slate-50 p-3 rounded-md border border-slate-100 flex flex-col gap-2">
+                          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                            Skills Check: {overlapCount} of {totalRequired} matching
+                          </div>
+                          
+                          <div className="flex flex-wrap gap-1.5">
+                            {/* Display matched skills in green */}
+                            {matchedSkills.map(skill => (
+                              <span
+                                key={skill}
+                                className="px-2 py-0.5 bg-green-100 text-green-800 border border-green-200 text-xs rounded-md font-medium"
+                              >
+                                {skill}
                               </span>
-                              <span className="text-lg font-bold text-blue-600">
-                                {similarityPct}%
+                            ))}
+
+                            {/* Display missing skills in light red/gray dashed */}
+                            {missingSkills.map(skill => (
+                              <span
+                                key={skill}
+                                className="px-2 py-0.5 bg-white border border-slate-200 border-dashed text-slate-400 text-xs rounded-md"
+                              >
+                                {skill} (missing)
                               </span>
-                            </div>
-                          )}
+                            ))}
+
+                            {/* Fallback if no skills are loaded */}
+                            {jobSkills.length === 0 && (
+                              <span className="text-xs text-slate-500 italic">
+                                No required skills extracted for this job yet.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Bottom evaluation / action panel */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-slate-100">
+                          <div>
+                            {latestScore ? (
+                              <div className="flex flex-col gap-1">
+                                <div className="text-xs text-slate-500">
+                                  AI ASSESSMENT RESULT
+                                </div>
+                                <div className="text-sm text-slate-700 font-medium">
+                                  Decision: <span className="font-bold text-slate-900">{latestScore.evaluation.classification}</span>
+                                  <span className="mx-2 font-normal text-slate-300">|</span>
+                                  Score: <span className="font-bold text-blue-600 text-base">{latestScore.ai_score} / 100</span>
+                                </div>
+                                <div className="text-xs text-slate-500 leading-normal max-w-lg mt-1">
+                                  {latestScore.evaluation.summary}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-slate-500 italic">
+                                Ready for deep assessment. Only potential matches recommended for LLM budget optimization.
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="self-end sm:self-center">
+                            <button
+                              onClick={() => handleEvaluate(match.id)}
+                              disabled={evaluatingIds[match.id]}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition duration-200 disabled:opacity-50 shadow-sm"
+                            >
+                              {evaluatingIds[match.id]
+                                ? "Evaluating (n8n)..."
+                                : latestScore
+                                ? "Re-run Deep AI"
+                                : "Run Deep AI Evaluation"}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
