@@ -1,26 +1,107 @@
-# AI Recruitment Platform (ATS)
+# Semillero AI Recruitment Platform (ATS)
 
-## Project Description
-A modern ATS platform designed to parse PDF CVs using multimodal AI, rank candidates against job vacancies using semantic vector search, and orchestrate automated recruitment stages via an external n8n hub.
+A modern Applicant Tracking System (ATS) built with Next.js App Router, Tailwind CSS, Supabase, pgvector, Google Gemini, and n8n automation. It parses PDF resumes, ranks candidates with semantic vector similarity search, and manages candidate pipelines with real-time comments, pinning, and n8n-powered next-step AI suggestions.
 
-## Core User Stories
-- **Recruiter - CV Upload:** As a recruiter, I want to upload CVs in PDF format so they can be evaluated automatically.
-- **Recruiter - Vacancy Ranking:** As a recruiter, I want a ranking of candidates per job vacancy.
-- **Recruiter - Seniority Detection:** As a recruiter, I want the system to detect seniority to adjust interviews.
-- **Recruiter - Profile Summary:** As a recruiter, I want a concise AI summary of the profile for quick review.
-- **Hiring Manager - Comparative Scoring:** As a hiring manager, I want a comparative score between candidates.
-- **Recruiter - Stage Automation:** As a recruiter, I want candidates to move through recruitment stages automatically.
-- **Candidate - Automated Emails:** As a candidate, I want to receive automated email confirmations for every stage change.
-- **Talent Team - Vacancy Metrics:** As a talent team, we want metrics on the progress per vacancy.
+---
 
-## Setup & Prerequisites
+## 🔒 Security & Access Control
 
-### 1. Google AI Studio Account (Mandatory)
-Vector embeddings matching and search operations require a direct call to the Google Gemini Embeddings API (`models/gemini-embedding-001`). 
-*   **Prerequisite**: You must obtain a free-tier or paid-tier Gemini API key from [Google AI Studio](https://aistudio.google.com/).
-*   **Usage**: The embedding model is free for up to 1,500 requests per day (15 requests per minute), which covers standard development and testing requirements.
-*   **Configuration**: Add your key to the `.env` file at the root of the project:
-    ```env
-    GEMINI_API_KEY=your_google_ai_studio_api_key_here
+The application is protected by a global secure access gate at startup.
+
+*   **Security Lock Screen**: Any access to the platform redirects to a bilingual lock screen requiring a password.
+*   **Encrypted Transmission**: The password is submitted encrypted over HTTPS to a secure server-side endpoint `/api/auth`.
+*   **Environment Configuration**: Store your password in the `.env` file under `APP_PASSWORD`.
+*   **Default Fallback**: If no `APP_PASSWORD` env variable is set, the system defaults to:
     ```
+    Semillero2026!
+    ```
+*   **Auto Logoff**: Sessions are tracked via a secure timestamp. Users are automatically logged off and returned to the lock screen after **24 hours (1 day)** of inactivity.
 
+---
+
+## 🛠️ Setup & Environment Configuration
+
+Create a `.env` file at the root of the project with the following variables:
+
+```env
+# Database Credentials
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SECRET_KEY=your_supabase_service_role_key
+
+# Security Access Lock
+APP_PASSWORD=Semillero2026!
+
+# LLM Core API Key
+GEMINI_API_KEY=your_gemini_api_key
+
+# n8n Automation Engine Settings
+N8N_HOST=https://n8n.yourdomain.com
+N8N_API_KEY=your_n8n_api_key
+NEXT_PUBLIC_N8N_WEBHOOK_URL=https://n8n.yourdomain.com/webhook/evaluate-candidate
+```
+
+---
+
+## 🚀 Installation & Running
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Run Development Server
+```bash
+npm run dev
+```
+
+### 3. Production Build & Verification
+```bash
+npm run build
+npm run lint
+```
+
+### 4. Deploy n8n Workflow
+To deploy or update the recruitment workflows inside your n8n workspace, run:
+```bash
+npx ts-node -O '{"module": "commonjs"}' scripts/deploy-n8n-v2.ts --fallback --fallback-provider=gemini
+```
+
+---
+
+## 📋 Interactive Demo Script (Presentation Walkthrough)
+
+Follow these steps to demonstrate the end-to-end capabilities during your presentation:
+
+### Step 1: Secure Login & Startup
+1. Open the application. You will be greeted by the **Secure Access Lock Screen**.
+2. Select your preferred language (English or Spanish) and toggle between **Light/Dark Mode** using the top-right controls.
+3. Enter the password `Semillero2026!` and click **Unlock**.
+
+### Step 2: Define a Job Vacancy
+1. Navigate to the **Vacancies** (Vacantes) tab.
+2. Click **Create Vacancy**. Enter a Title (e.g. `Senior Frontend Engineer`) and requirements.
+3. Observe the newly created card appear in the vacancy sidebar.
+
+### Step 3: Ingest Candidate CVs (RAG parsing)
+1. Select the newly created vacancy.
+2. Drag and drop or upload a candidate CV in PDF format.
+3. The system parses the PDF, generates a text vector embedding, inserts the candidate record, and automatically creates an initial **Screening** interview.
+
+### Step 4: Run AI Suitability Match
+1. Click **Run AI Evaluation** on the candidate.
+2. Observe the suitabilty score (0-100), risk level (Low, Medium, High), classification, and a concise 3-sentence summary generated by Gemini.
+3. Check the A-Z list of candidates in the **Candidates** (Candidatos) tab to see the details, linked vacancies, and duplicate file warnings if you re-upload the same PDF.
+
+### Step 5: Pipeline Interview Management
+1. Go to the **Interviews** (Entrevistas) tab.
+2. Observe the **Open Positions** sidebar showing positions and candidate counts.
+3. Click on a candidate. Watch the **Open Positions** sidebar slide out of view with a smooth CSS transition, and the Candidate List + Detail Pane expand to fill the open space.
+4. Toggle the **Pin** button next to the candidate's name to move them to the top of the list.
+
+### Step 6: Interactive Timestamps & AI next steps
+1. Click **Get AI Suggestion** inside the candidate's interview detail pane.
+2. An n8n webhook will query Gemini and append a concise markdown list of recommended next steps as a comment in the timeline.
+3. Try clicking on any comment card. Observe it collapse/uncollapse with a chevron icon transition.
+4. Modify the interview **Stage** dropdown. The stage updates instantly in the database with a timestamp log in the comment timeline.
+5. Click **Back to All Interviews** in the top navigation. Watch the **Open Positions** sidebar animate back into view.
