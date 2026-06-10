@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useApp } from "@/components/AppContext";
+import { notFound } from "next/navigation";
 
 const translations = {
   en: {
@@ -47,6 +48,10 @@ const translations = {
 };
 
 export default function WorkflowsPage() {
+  if (process.env.NODE_ENV === "production") {
+    notFound();
+  }
+
   const { lang } = useApp();
   const t = translations[lang];
   const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || "";

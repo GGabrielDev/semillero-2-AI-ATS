@@ -45,12 +45,14 @@ export default function DashboardLayout({
               >
                 {lang === "en" ? "Interviews" : "Entrevistas"}
               </Link>
-              <Link
-                href="/workflows"
-                className="text-sm text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-medium transition-colors"
-              >
-                {lang === "en" ? "Workflows" : "Flujos de Trabajo"}
-              </Link>
+              {process.env.NODE_ENV !== "production" && (
+                <Link
+                  href="/workflows"
+                  className="text-sm text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-medium transition-colors"
+                >
+                  {lang === "en" ? "Workflows" : "Flujos de Trabajo"}
+                </Link>
+              )}
             </nav>
           </div>
 
