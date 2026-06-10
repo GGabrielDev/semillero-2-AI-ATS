@@ -69,6 +69,12 @@ const skillsMatch = (candSkill: string, jobSkill: string): boolean => {
   return sharedWords.length > 0;
 };
 
+interface UploadFileStatus {
+  name: string;
+  status: "uploading" | "success" | "error";
+  errorMessage?: string;
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -79,6 +85,7 @@ export default function JobsPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [uploadStatuses, setUploadStatuses] = useState<UploadFileStatus[]>([]);
 
   // Evaluation states
   const [evaluatingIds, setEvaluatingIds] = useState<Record<string, boolean>>({});
@@ -129,6 +136,10 @@ export default function JobsPage() {
   // Fetch candidates/matches when selected job changes
   useEffect(() => {
     let active = true;
+
+    Promise.resolve().then(() => {
+      if (active) setUploadStatuses([]);
+    });
 
     if (!selectedJob) {
       Promise.resolve().then(() => {
@@ -195,51 +206,80 @@ export default function JobsPage() {
     }
   };
 
-  // Upload PDF CV
+  // Upload PDF CVs
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedJob) return;
+    const files = e.target.files;
+    if (!files || files.length === 0 || !selectedJob) return;
 
-    if (file.type !== "application/pdf") {
-      setUploadError("Please upload a PDF file");
-      return;
-    }
+    const fileList = Array.from(files);
 
-    try {
-      setUploading(true);
-      setUploadError(null);
-      setUploadSuccess(null);
+    const initialStatuses = fileList.map((file) => ({
+      name: file.name,
+      status: "uploading" as const,
+    }));
+    setUploadStatuses(initialStatuses);
+    setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("jobId", selectedJob.id);
-
-      const res = await fetch("/candidates/api/parse-cv", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Failed to process CV");
+    const uploadPromises = fileList.map(async (file, index) => {
+      if (file.type !== "application/pdf") {
+        setUploadStatuses((prev) =>
+          prev.map((status, idx) =>
+            idx === index
+              ? { ...status, status: "error" as const, errorMessage: "Only PDF files are allowed" }
+              : status
+          )
+        );
+        return;
       }
 
-      const resData = await res.json();
-      setUploadSuccess(`CV for ${resData.candidateName || file.name} successfully parsed and linked!`);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("jobId", selectedJob.id);
 
-      // Refresh matches for current job
-      const matchesRes = await fetch(`/api/candidates?jobId=${selectedJob.id}`);
-      if (matchesRes.ok) {
-        const matchesData = await matchesRes.json();
-        setMatches(matchesData);
+        const res = await fetch("/candidates/api/parse-cv", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to process CV");
+        }
+
+        await res.json();
+        setUploadStatuses((prev) =>
+          prev.map((status, idx) =>
+            idx === index
+              ? { ...status, status: "success" as const }
+              : status
+          )
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Error uploading CV";
+        setUploadStatuses((prev) =>
+          prev.map((status, idx) =>
+            idx === index
+              ? { ...status, status: "error" as const, errorMessage: msg }
+              : status
+          )
+        );
       }
-    } catch (err: unknown) {
-      setUploadError(err instanceof Error ? err.message : "Error uploading CV");
-    } finally {
-      setUploading(false);
-      // Clear file input
-      e.target.value = "";
+    });
+
+    await Promise.all(uploadPromises);
+    setUploading(false);
+
+    // Refresh matches for current job
+    const matchesRes = await fetch(`/api/candidates?jobId=${selectedJob.id}`);
+    if (matchesRes.ok) {
+      const matchesData = await matchesRes.json();
+      setMatches(matchesData);
     }
+    
+    e.target.value = "";
   };
 
   // Run deep AI evaluation via backend endpoint
@@ -498,13 +538,14 @@ export default function JobsPage() {
                 Upload Candidate CV for this Vacancy (PDF)
               </h3>
               <p className="text-xs text-slate-500 mb-4 max-w-md">
-                Uploading a candidate CV parses the text and extracts their skills/profile in a vacuum. It associates them with this job, enabling you to check skills overlap before running the deep AI score model.
+                Uploading a candidate CV parses the text and extracts their skills/profile. It associates them with this job, enabling you to check skills overlap before running the deep AI score model.
               </p>
               <label className="relative cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-200">
-                {uploading ? "Processing CV..." : "Choose CV File"}
+                {uploading ? "Uploading CVs..." : "Choose CV Files"}
                 <input
                   type="file"
                   accept=".pdf"
+                  multiple
                   onChange={handleFileUpload}
                   disabled={uploading}
                   className="hidden"
@@ -519,6 +560,43 @@ export default function JobsPage() {
                 <p className="text-xs text-green-600 mt-3 font-semibold">
                   {uploadSuccess}
                 </p>
+              )}
+              {uploadStatuses.length > 0 && (
+                <div className="mt-4 w-full max-w-md border border-slate-200 rounded-md p-4 bg-slate-50 text-left">
+                  <h4 className="text-xs font-semibold text-slate-900 mb-2 uppercase tracking-wider">
+                    Upload Progress
+                  </h4>
+                  <ul className="divide-y divide-slate-200">
+                    {uploadStatuses.map((item, idx) => (
+                      <li key={idx} className="py-2 flex flex-col gap-1 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700 truncate max-w-[250px]" title={item.name}>
+                            {item.name}
+                          </span>
+                          {item.status === "uploading" && (
+                            <span className="text-slate-600 font-semibold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse"></span>
+                              Uploading...
+                            </span>
+                          )}
+                          {item.status === "success" && (
+                            <span className="text-green-600 font-semibold flex items-center gap-1">
+                              ✓ Success
+                            </span>
+                          )}
+                          {item.status === "error" && (
+                            <span className="text-red-600 font-semibold flex items-center gap-1">
+                              ✗ Error
+                            </span>
+                          )}
+                        </div>
+                        {item.errorMessage && (
+                          <p className="text-red-600 font-normal mt-0.5">{item.errorMessage}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
 
