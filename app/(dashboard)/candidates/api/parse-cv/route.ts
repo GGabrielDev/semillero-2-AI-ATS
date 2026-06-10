@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
-import { PDFParse } from "pdf-parse";
 import { extractCandidateProfile } from "@/lib/gemini";
+
+// Polyfill missing DOM APIs in Next.js Serverless / Node environment for pdfjs-dist
+if (typeof global !== "undefined") {
+  const g = global as Record<string, unknown>;
+  if (!g["DOMMatrix"]) g["DOMMatrix"] = class DOMMatrix {};
+  if (!g["ImageData"]) g["ImageData"] = class ImageData {};
+  if (!g["Path2D"]) g["Path2D"] = class Path2D {};
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,6 +21,9 @@ export async function POST(request: NextRequest) {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    // Dynamic import to ensure global polyfills run first
+    const { PDFParse } = await import("pdf-parse");
 
     // Extract text from PDF using PDFParse v2 API
     const parser = new PDFParse({ data: buffer });
