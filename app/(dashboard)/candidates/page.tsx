@@ -235,20 +235,20 @@ export default function CandidatesPage() {
         if (selectIdAfterFetch) {
           const matched = data.find((c: Candidate) => c.id === selectIdAfterFetch);
           if (matched) setSelectedCandidate(matched);
-        } else if (data.length > 0 && !selectedCandidate) {
-          // Default selection if none is currently selected
-          setSelectedCandidate(data[0]);
-        } else if (selectedCandidate) {
-          // Keep current selection fresh
-          const refreshed = data.find((c: Candidate) => c.id === selectedCandidate.id);
-          setSelectedCandidate(refreshed || data[0] || null);
+        } else {
+          // Keep current selection fresh using functional update
+          setSelectedCandidate((prevSelected) => {
+            if (!prevSelected) return data[0] || null;
+            const refreshed = data.find((c: Candidate) => c.id === prevSelected.id);
+            return refreshed || data[0] || null;
+          });
         }
       })
       .catch((err) => {
         console.error(err);
         setLoading(false);
       });
-  }, [selectedCandidate]);
+  }, []);
 
   useEffect(() => {
     fetchCandidates();
