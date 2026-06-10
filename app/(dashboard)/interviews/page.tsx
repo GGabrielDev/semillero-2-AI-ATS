@@ -3,12 +3,15 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useApp } from "@/components/AppContext";
+import ReactMarkdown from "react-markdown";
 
 interface Comment {
   id: string;
   text: string;
   timestamp: string; // ISO string
   author?: string;
+  stage?: string;
+  isAi?: boolean;
 }
 
 interface Interview {
@@ -22,10 +25,21 @@ interface Interview {
   updated_at: string;
   pinned: boolean;
   candidates: {
+    id: string;
     name: string;
+    contact_info: {
+      email: string;
+      phone: string;
+      skills?: string[];
+      summary?: string;
+    };
   } | null;
   jobs: {
+    id: string;
     title: string;
+    requirements: {
+      text?: string;
+    };
   } | null;
 }
 
@@ -68,7 +82,11 @@ const translations = {
     unpinCandidate: "Unpin Candidate",
     postedByAgent: "Agent",
     noCandidatesInStage: "No candidates for this position.",
-    candidates: "Candidates"
+    candidates: "Candidates",
+    
+    aiSuggestButton: "Get AI Suggestion",
+    suggesting: "Analyzing...",
+    cooldownMessage: "Cooldown: change stage or wait {hours}h to query AI suggestion again"
   },
   es: {
     interviewsTitle: "Entrevistas",
@@ -103,7 +121,11 @@ const translations = {
     unpinCandidate: "Desfijar Candidato",
     postedByAgent: "Agente",
     noCandidatesInStage: "No hay candidatos para este puesto.",
-    candidates: "Candidatos"
+    candidates: "Candidatos",
+    
+    aiSuggestButton: "Obtener Sugerencia IA",
+    suggesting: "Analizando...",
+    cooldownMessage: "Cooldown: cambie la etapa o espere {hours}h para volver a pedir sugerencia"
   }
 };
 
@@ -132,6 +154,10 @@ function parseFeedback(feedbackText: string | null): Comment[] {
   return [{ id: "legacy-initial", text: feedbackText, timestamp: new Date().toISOString() }];
 }
 
+function generateCommentId(): string {
+  return Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+}
+
 export default function InterviewsPage() {
   const { lang } = useApp();
   const t = translations[lang];
@@ -144,6 +170,8 @@ export default function InterviewsPage() {
   const [selectedInterviewId, setSelectedInterviewId] = useState<string | null>(null);
   
   const [newComment, setNewComment] = useState("");
+  const [collapsedComments, setCollapsedComments] = useState<Record<string, boolean>>({});
+  const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -153,7 +181,7 @@ export default function InterviewsPage() {
         const [interviewsRes, jobsRes] = await Promise.all([
           supabase
             .from("interviews")
-            .select("*, candidates(name), jobs(title)"),
+            .select("*, candidates(*), jobs(*)"),
           supabase
             .from("jobs")
             .select("id, title")
@@ -230,7 +258,7 @@ export default function InterviewsPage() {
     if (!currentInterview) return;
 
     const existingComments = parseFeedback(currentInterview.feedback);
-    const commentId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+    const commentId = generateCommentId();
     
     const newCommentItem: Comment = {
       id: commentId,
@@ -242,6 +270,13 @@ export default function InterviewsPage() {
     const updatedComments = [...existingComments, newCommentItem];
     await updateInterviewField(selectedInterviewId, { feedback: JSON.stringify(updatedComments) });
     setNewComment("");
+  };
+
+  const toggleCommentCollapse = (commentId: string) => {
+    setCollapsedComments((prev) => ({
+      ...prev,
+      [commentId]: !prev[commentId],
+    }));
   };
 
   const getInterviewCountForJob = (jobId: string) => {
@@ -276,6 +311,71 @@ export default function InterviewsPage() {
   const sortedInterviews = getSortedInterviews(filteredInterviews);
   const selectedInterview = interviews.find((item) => item.id === selectedInterviewId) || null;
   const selectedInterviewComments = selectedInterview ? parseFeedback(selectedInterview.feedback) : [];
+
+  // Cooldown calculation for AI suggestion
+  const lastAiComment = [...selectedInterviewComments]
+    .reverse()
+    .find((c) => c.author === "AI Assistant" || c.author === "Asistente IA" || c.isAi);
+
+  const getCooldownStatus = () => {
+    if (!selectedInterview || !lastAiComment) return { active: false, hours: 0 };
+    if (lastAiComment.stage && lastAiComment.stage !== selectedInterview.stage) return { active: false, hours: 0 };
+    const lastTime = new Date(lastAiComment.timestamp).getTime();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    // eslint-disable-next-line react-hooks/purity
+    const elapsed = Date.now() - lastTime;
+    if (elapsed < oneDayMs) {
+      return { active: true, hours: Math.ceil((oneDayMs - elapsed) / (1000 * 60 * 60)) };
+    }
+    return { active: false, hours: 0 };
+  };
+
+  const cooldownStatus = getCooldownStatus();
+  const cooldownActive = cooldownStatus.active;
+  const cooldownHours = cooldownStatus.hours;
+
+  const handleGetAiSuggestion = async () => {
+    if (!selectedInterview || cooldownActive || suggesting) return;
+
+    setSuggesting(true);
+    try {
+      const response = await fetch("/api/interviews/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateName: selectedInterview.candidates?.name,
+          jobTitle: selectedInterview.jobs?.title,
+          currentStage: selectedInterview.stage,
+          candidateSummary: selectedInterview.candidates?.contact_info?.summary,
+          candidateSkills: selectedInterview.candidates?.contact_info?.skills,
+          jobRequirements: selectedInterview.jobs?.requirements?.text,
+          commentHistory: selectedInterviewComments,
+          lang,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to get suggestion");
+      const data = await response.json();
+
+      // Save suggestion as comment
+      const commentId = generateCommentId();
+      const newCommentItem: Comment = {
+        id: commentId,
+        text: data.suggestion,
+        timestamp: new Date().toISOString(),
+        author: lang === "es" ? "Asistente IA" : "AI Assistant",
+        stage: selectedInterview.stage,
+        isAi: true
+      };
+
+      const updatedComments = [...selectedInterviewComments, newCommentItem];
+      await updateInterviewField(selectedInterview.id, { feedback: JSON.stringify(updatedComments) });
+    } catch (err) {
+      console.error("Error getting AI suggestion:", err);
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -483,9 +583,28 @@ export default function InterviewsPage() {
 
                 {/* Comments Thread System */}
                 <div className="flex flex-col gap-4 border-t border-slate-200 dark:border-slate-800 pt-4">
-                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                    {t.interviewFeedback}
-                  </h3>
+                  <div className="flex items-center justify-between gap-4">
+                    <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                      {t.interviewFeedback}
+                    </h3>
+                    
+                    {/* AI Suggestion Button */}
+                    <button
+                      onClick={handleGetAiSuggestion}
+                      disabled={suggesting || cooldownActive}
+                      title={cooldownActive ? t.cooldownMessage.replace("{hours}", String(cooldownHours)) : undefined}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md border transition-all duration-200 cursor-pointer flex items-center gap-1.5 select-none ${
+                        cooldownActive
+                          ? "bg-slate-50 dark:bg-slate-800/50 text-slate-400 border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60"
+                          : "bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/20 dark:hover:bg-blue-950/45 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/80"
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 21m0-12h.008v.008H9V9Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM12 10.5h.008v.008H12V10.5Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.75 3h.008v.008H11.625V13.5Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM15 9.75h.008v.008H15V9.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM18 12h.008v.008H18V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.75 3h.008v.008H17.625V15Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm11.379-3.379a3 3 0 0 0-4.242 4.242l4.242-4.242Z" />
+                      </svg>
+                      {suggesting ? t.suggesting : t.aiSuggestButton}
+                    </button>
+                  </div>
 
                   {/* Comment List */}
                   <div className="max-h-72 overflow-y-auto pr-1 flex flex-col gap-3">
@@ -494,24 +613,43 @@ export default function InterviewsPage() {
                         {t.noCommentsYet}
                       </p>
                     ) : (
-                      selectedInterviewComments.map((comment) => (
-                        <div
-                          key={comment.id}
-                          className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-100 dark:border-slate-800/60 flex flex-col gap-1.5"
-                        >
-                          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                            <span className="font-semibold text-blue-600 dark:text-blue-400">
-                              {comment.author || t.postedByAgent}
-                            </span>
-                            <span>
-                              {new Date(comment.timestamp).toLocaleString()}
-                            </span>
+                      selectedInterviewComments.map((comment) => {
+                        const isCollapsed = collapsedComments[comment.id] || false;
+                        const isAiComment = comment.isAi || comment.author === "AI Assistant" || comment.author === "Asistente IA";
+                        return (
+                          <div
+                            key={comment.id}
+                            className={`p-3 rounded-lg border flex flex-col gap-1.5 transition-colors ${
+                              isAiComment
+                                ? "bg-blue-50/20 dark:bg-blue-950/10 border-blue-100 dark:border-blue-900/50"
+                                : "bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800/60"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className={`font-bold ${isAiComment ? "text-blue-600 dark:text-blue-400" : "text-slate-700 dark:text-slate-300"}`}>
+                                {comment.author || t.postedByAgent}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <span>
+                                  {new Date(comment.timestamp).toLocaleString()}
+                                </span>
+                                <button
+                                  onClick={() => toggleCommentCollapse(comment.id)}
+                                  className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-semibold cursor-pointer select-none"
+                                >
+                                  {isCollapsed ? "[+]" : "[-]"}
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {!isCollapsed && (
+                              <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed markdown-content">
+                                <ReactMarkdown>{comment.text}</ReactMarkdown>
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-                            {comment.text}
-                          </p>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
 
