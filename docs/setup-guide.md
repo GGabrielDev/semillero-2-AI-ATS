@@ -128,6 +128,57 @@ The n8n Kickstarter script (`deploy-n8n-v2.ts`) supports credentials setup and d
     ```
     *Note: The script dynamically detects if a credential exists in n8n. If found, it safely reuses the credential to avoid entering keys repeatedly.*
 
+### D. Email Ingestion & Notification Workflows
+To deploy the email-based workflows (receiving CVs via IMAP and notifying candidates via SMTP on stage changes), run the dedicated email deployment script:
+```bash
+npx tsx scripts/deploy-email-automation.ts
+```
+
+This script will:
+1. Create or update `Semillero2_IMAP_V2` credentials in n8n (utilizes standard secure port `993`).
+2. Create or update `Semillero2_SMTP` credentials in n8n (utilizes `.env` SMTP variables).
+3. Deploy and activate **Semillero2: Email Ingestion Listener** (listens for emails with PDF attachments, extracts text, and triggers candidate evaluation).
+4. Deploy and activate **Semillero2: Stage Change Email Notifier** (listens for database webhooks on stage updates and sends templated HTML emails to candidates).
+
+### E. Supabase Database Webhook Setup (Stage Changes)
+The email notifier workflow is triggered by a Supabase Database Webhook when candidate stages are updated. 
+Run the following SQL in your Supabase SQL Editor to enable the trigger:
+```sql
+-- Enable pg_net extension for network calls
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- Create trigger function
+CREATE OR REPLACE FUNCTION notify_interview_stage_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  payload_body TEXT;
+BEGIN
+  IF (TG_OP = 'INSERT' OR OLD.stage IS DISTINCT FROM NEW.stage) THEN
+    payload_body := jsonb_build_object(
+      'old_record', CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE to_jsonb(OLD) END,
+      'new_record', to_jsonb(NEW)
+    )::text;
+
+    PERFORM net.http_post(
+      url := 'https://n8n.gaboggamer.online/webhook/stage-changed',
+      headers := '{"Content-Type": "application/json"}'::jsonb,
+      body := payload_body
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Drop existing trigger if it exists
+DROP TRIGGER IF EXISTS tr_interview_stage_change ON public.interviews;
+
+-- Bind trigger to public.interviews table
+CREATE TRIGGER tr_interview_stage_change
+AFTER INSERT OR UPDATE ON public.interviews
+FOR EACH ROW
+EXECUTE FUNCTION notify_interview_stage_change();
+```
+
 ---
 
 ## 3. Supported Webhooks / API Endpoints
