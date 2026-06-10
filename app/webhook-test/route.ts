@@ -4,10 +4,20 @@ import { generateEmbedding } from "@/lib/embeddings";
 import fs from "fs/promises";
 import path from "path";
 
+interface TestResult {
+  fileName: string;
+  status: "success" | "failed";
+  error?: string;
+  candidateId?: string;
+  candidateName?: string;
+  evaluation?: unknown;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = createServerSupabaseClient();
     const origin = request.nextUrl.origin;
+    const bulkMode = request.nextUrl.searchParams.get("bulk") === "true";
 
     // 1. Fetch or create a Job Vacancy for testing
     let job = null;
@@ -44,119 +54,139 @@ export async function GET(request: NextRequest) {
       job = newJob;
     }
 
-    // 2. Read the Curriculum Vitae test asset
-    const cvPath = path.join(process.cwd(), "test-assets", "curriculum-vitae-english.pdf");
-    let fileBuffer;
+    // 2. Identify files to test
+    const testAssetsDir = path.join(process.cwd(), "test-assets");
+    let filesToTest: string[] = [];
+
     try {
-      fileBuffer = await fs.readFile(cvPath);
-    } catch (fsError) {
-      return NextResponse.json({
-        error: `Could not read test CV asset at ${cvPath}. Please ensure it exists. Detailed error: ${fsError instanceof Error ? fsError.message : fsError}`
-      }, { status: 400 });
+      const files = await fs.readdir(testAssetsDir);
+      filesToTest = files.filter(f => f.toLowerCase().endsWith(".pdf"));
+    } catch (err) {
+      return NextResponse.json({ error: `Failed to read test-assets folder: ${err instanceof Error ? err.message : err}` }, { status: 500 });
     }
 
-    const testMode = request.nextUrl.searchParams.get("testMode") !== "false";
-
-    // 3. Prepare Form Data for parse-cv endpoint
-    const formData = new FormData();
-    const fileBlob = new Blob([fileBuffer], { type: "application/pdf" });
-    formData.append("file", fileBlob, "curriculum-vitae-english.pdf");
-    formData.append("jobId", job.id);
-    formData.append("isTest", testMode ? "true" : "false");
-
-    // 4. Send POST request to local parse-cv API
-    const parseCvUrl = `${origin}/candidates/api/parse-cv`;
-    let parseResult;
-    try {
-      const parseResponse = await fetch(parseCvUrl, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!parseResponse.ok) {
-        const errText = await parseResponse.text();
-        return NextResponse.json({
-          error: `Parse-CV API returned non-OK status: ${parseResponse.status} - ${errText}`
-        }, { status: 500 });
-      }
-
-      parseResult = await parseResponse.json();
-    } catch (fetchError) {
-      return NextResponse.json({
-        error: `Failed to call local parse-cv route: ${fetchError instanceof Error ? fetchError.message : fetchError}`
-      }, { status: 500 });
+    if (filesToTest.length === 0) {
+      return NextResponse.json({ error: "No PDF CV assets found in test-assets folder." }, { status: 400 });
     }
 
-    const { candidateId, interviewId, n8nResponse } = parseResult;
-
-    let scoreRecord = null;
-    let verified = false;
-    let verificationAttempts = 0;
-
-    if (testMode) {
-      // In test mode, we skip DB insertion, so n8n returns the structured response directly.
-      // Let's verify that the response contains the expected evaluation structure.
-      const hasEvaluation = n8nResponse && typeof n8nResponse === "object" && "evaluation" in n8nResponse;
-      const hasAiScore = n8nResponse && typeof n8nResponse === "object" && "ai_score" in n8nResponse;
-
-      if (hasEvaluation && hasAiScore) {
-        verified = true;
-        scoreRecord = n8nResponse;
+    // If not bulk mode, limit to just the default single file
+    if (!bulkMode) {
+      const defaultFile = "curriculum-vitae-english.pdf";
+      if (filesToTest.includes(defaultFile)) {
+        filesToTest = [defaultFile];
+      } else {
+        filesToTest = [filesToTest[0]]; // Fallback to first available file
       }
-    } else {
-      // In live mode, we poll the DB to verify, but we MUST clean it up immediately afterwards
-      const maxAttempts = 10;
-      const delayMs = 1500;
+    }
 
-      for (let i = 0; i < maxAttempts; i++) {
-        verificationAttempts++;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const results: TestResult[] = [];
 
-        const { data: score, error: scoreError } = await supabase
-          .from("scores")
-          .select("*")
-          .eq("candidate_id", candidateId)
-          .eq("interview_id", interviewId)
-          .maybeSingle();
+    // 3. Process test files sequentially
+    for (const fileName of filesToTest) {
+      const cvPath = path.join(testAssetsDir, fileName);
+      let fileBuffer: Buffer;
+      let candidateId: string | null = null;
 
-        if (score && !scoreError) {
-          scoreRecord = score;
-          verified = true;
-          break;
+      try {
+        fileBuffer = await fs.readFile(cvPath);
+      } catch (fsError) {
+        results.push({
+          fileName,
+          status: "failed",
+          error: `Could not read file: ${fsError instanceof Error ? fsError.message : fsError}`,
+        });
+        continue;
+      }
+
+      try {
+        // Step A: Parse CV (creates candidate record in DB)
+        const formData = new FormData();
+        const fileBlob = new Blob([new Uint8Array(fileBuffer)], { type: "application/pdf" });
+        formData.append("file", fileBlob, fileName);
+        formData.append("isTest", "false"); // Must insert in DB so evaluate API can read it
+
+        const parseCvUrl = `${origin}/candidates/api/parse-cv`;
+        const parseResponse = await fetch(parseCvUrl, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!parseResponse.ok) {
+          const errText = await parseResponse.text();
+          throw new Error(`Parse-CV API error: ${parseResponse.status} - ${errText}`);
+        }
+
+        const parseResult = await parseResponse.json();
+        candidateId = parseResult.candidateId;
+        const candidateName = parseResult.candidateName;
+
+        if (!candidateId || candidateId === "00000000-0000-0000-0000-000000000000") {
+          throw new Error("Parse-CV API returned invalid candidateId");
+        }
+
+        // Step B: Run AI Evaluation (triggers n8n evaluation with isTest: true)
+        const evaluateUrl = `${origin}/candidates/api/evaluate`;
+        const evaluateResponse = await fetch(evaluateUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            candidateId,
+            jobId: job.id,
+            isTest: true, // In-memory evaluation to avoid inserting test score in Supabase
+          }),
+        });
+
+        if (!evaluateResponse.ok) {
+          const errText = await evaluateResponse.text();
+          throw new Error(`Evaluate API error: ${evaluateResponse.status} - ${errText}`);
+        }
+
+        const evalResult = await evaluateResponse.json();
+        const n8nResponse = evalResult.n8nResponse;
+
+        // Step C: Verify n8n output structure
+        const hasEvaluation = n8nResponse && typeof n8nResponse === "object" && "evaluation" in n8nResponse;
+        const hasAiScore = n8nResponse && typeof n8nResponse === "object" && "ai_score" in n8nResponse;
+
+        if (hasEvaluation && hasAiScore) {
+          results.push({
+            fileName,
+            status: "success",
+            candidateId,
+            candidateName,
+            evaluation: n8nResponse,
+          });
+        } else {
+          throw new Error(`Invalid response structure from n8n: ${JSON.stringify(n8nResponse)}`);
+        }
+      } catch (err: unknown) {
+        results.push({
+          fileName,
+          status: "failed",
+          error: err instanceof Error ? err.message : String(err),
+          candidateId: candidateId || undefined,
+        });
+      } finally {
+        // Step D: Cleanup candidate from database (cascades to scores/interviews)
+        if (candidateId && candidateId !== "00000000-0000-0000-0000-000000000000") {
+          console.log(`Cleaning up test candidate: ${candidateId}`);
+          await supabase.from("candidates").delete().eq("id", candidateId);
         }
       }
-
-      // Cleanup immediately to avoid database clutter!
-      if (candidateId && candidateId !== "00000000-0000-0000-0000-000000000000") {
-        console.log(`Cleaning up test candidate: ${candidateId}`);
-        await supabase.from("scores").delete().eq("candidate_id", candidateId);
-        await supabase.from("interviews").delete().eq("candidate_id", candidateId);
-        await supabase.from("candidates").delete().eq("id", candidateId);
-      }
     }
+
+    const overallSuccess = results.every(r => r.status === "success");
 
     return NextResponse.json({
-      status: verified ? "success" : "completed_with_pending_evaluation",
-      message: verified
-        ? (testMode ? "Pipeline test executed and verified successfully (In-Memory / No DB Write)!" : "Pipeline test executed, verified, and cleaned successfully from DB!")
-        : "Pipeline executed but AI evaluation verification failed.",
-      testDetails: {
-        jobUsed: {
-          id: job.id,
-          title: job.title,
-          status: existingJobs && existingJobs.length > 0 ? "reused" : "created",
-        },
-        parseCvResponse: {
-          candidateId,
-          interviewId,
-          n8nWebhookResponse: n8nResponse,
-        },
-        verification: {
-          attempts: verificationAttempts,
-          verified,
-          scoreData: scoreRecord,
-        }
-      }
+      status: overallSuccess ? "success" : "partial_or_full_failure",
+      bulkMode,
+      totalCount: results.length,
+      successCount: results.filter(r => r.status === "success").length,
+      jobUsed: {
+        id: job.id,
+        title: job.title,
+      },
+      results,
     });
 
   } catch (error: unknown) {

@@ -4,7 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { candidateId, jobId } = body;
+    const { candidateId, jobId, isTest } = body;
 
     if (!candidateId || !jobId) {
       return NextResponse.json(
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
             text: cvText,
             jobTitle: job.title,
             jobRequirements: jobRequirementsText,
-            isTest: false,
+            isTest: isTest === true || isTest === "true",
           }),
         });
 
