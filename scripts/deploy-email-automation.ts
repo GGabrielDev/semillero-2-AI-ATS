@@ -54,8 +54,8 @@ async function getOrCreateCredential(name: string, type: string, data: any) {
     const credsList = await n8nRequest("/api/v1/credentials");
     const existingCred = credsList.data.find((c: any) => c.name === name && c.type === type);
     if (existingCred) {
-      console.log(`Reusing existing credential: ${name} (ID: ${existingCred.id})...`);
-      return existingCred.id;
+      console.log(`Deleting existing credential to recreate: ${name} (ID: ${existingCred.id})...`);
+      await n8nRequest(`/api/v1/credentials/${existingCred.id}`, "DELETE");
     }
     
     const newCred = await n8nRequest("/api/v1/credentials", "POST", {
@@ -98,7 +98,7 @@ async function main() {
   const supabaseCredId = await getOrCreateCredential("Semillero2_Supabase", "supabaseApi", {
     host: SUPABASE_URL,
     serviceRole: SUPABASE_SECRET_KEY,
-    allowedHttpRequestDomains: "none",
+    allowedHttpRequestDomains: "all",
   });
 
   // 4. Fetch Candidate Evaluation Workflow ID

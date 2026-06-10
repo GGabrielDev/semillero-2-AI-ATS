@@ -75,17 +75,16 @@ async function getOrCreateCredential(name: string, type: string, data: any) {
     const credsList = await n8nRequest("/api/v1/credentials");
     const existingCred = credsList.data.find((c: any) => c.name === name && c.type === type);
     if (existingCred) {
-      console.log(`Reusing existing credential: ${name} (ID: ${existingCred.id})`);
-      return existingCred.id;
-    } else {
-      const newCred = await n8nRequest("/api/v1/credentials", "POST", {
-        name,
-        type,
-        data,
-      });
-      console.log(`Created new credential: ${name} (ID: ${newCred.id})`);
-      return newCred.id;
+      console.log(`Deleting existing credential to recreate: ${name} (ID: ${existingCred.id})...`);
+      await n8nRequest(`/api/v1/credentials/${existingCred.id}`, "DELETE");
     }
+    const newCred = await n8nRequest("/api/v1/credentials", "POST", {
+      name,
+      type,
+      data,
+    });
+    console.log(`Created new credential: ${name} (ID: ${newCred.id})`);
+    return newCred.id;
   } catch (err: any) {
     console.error(`Error setting up credential ${name}:`, err.message);
     process.exit(1);
@@ -108,7 +107,7 @@ function getProviderConfig(provider: string, apiKey: string, modelName: string):
         credentialType: "deepSeekApi",
         credentialData: {
           apiKey,
-          allowedHttpRequestDomains: "none",
+          allowedHttpRequestDomains: "all",
         },
         nodeParameters: {
           model: modelName || "deepseek-chat",
@@ -122,7 +121,7 @@ function getProviderConfig(provider: string, apiKey: string, modelName: string):
         credentialData: {
           apiKey,
           header: false,
-          allowedHttpRequestDomains: "none",
+          allowedHttpRequestDomains: "all",
         },
         nodeParameters: {
           model: modelName || "gpt-4o-mini",
@@ -136,7 +135,7 @@ function getProviderConfig(provider: string, apiKey: string, modelName: string):
         credentialData: {
           apiKey,
           host: "https://generativelanguage.googleapis.com",
-          allowedHttpRequestDomains: "none",
+          allowedHttpRequestDomains: "all",
         },
         nodeParameters: {
           model: modelName || "gemini-1.5-flash",
@@ -149,7 +148,7 @@ function getProviderConfig(provider: string, apiKey: string, modelName: string):
         credentialType: "anthropicApi",
         credentialData: {
           apiKey,
-          allowedHttpRequestDomains: "none",
+          allowedHttpRequestDomains: "all",
         },
         nodeParameters: {
           model: modelName || "claude-3-5-sonnet-latest",
@@ -240,7 +239,7 @@ async function main() {
   const supabaseCredId = await getOrCreateCredential("Semillero2_Supabase", "supabaseApi", {
     host: SUPABASE_URL,
     serviceRole: SUPABASE_SECRET_KEY,
-    allowedHttpRequestDomains: "none",
+    allowedHttpRequestDomains: "all",
   });
 
   // 3. Manage Primary Model Credentials
